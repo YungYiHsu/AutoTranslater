@@ -26,6 +26,7 @@ def make_app(tmp_path: Path, model: str = "gemini-3.5-flash") -> Any:
     app.app_directory = tmp_path
     app.config = AppConfig(model=model)
     app.model_name = Value(model)
+    app.model_entry = SimpleNamespace(configure=lambda **_kwargs: None)
     app.state = "work_ready"
     app.plan = None
     app.controller = None
@@ -46,10 +47,24 @@ def test_manual_model_is_saved_to_config(tmp_path: Path) -> None:
 
     assert app.config.model == "gemini-custom-model"
     assert app.model_name.get() == "gemini-custom-model"
-    assert json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))["model"] == (
-        "gemini-custom-model"
-    )
+    saved = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert saved["model"] == "gemini-custom-model"
+    assert saved["saved_models"] == ["gemini-custom-model"]
     assert app._term_organization_service is None
+
+
+def test_previous_custom_model_remains_in_dropdown_after_switch(tmp_path: Path) -> None:
+    app = make_app(tmp_path, model="gemini-custom-old")
+    configured_values: list[tuple[str, ...]] = []
+    app.model_entry = SimpleNamespace(
+        configure=lambda **kwargs: configured_values.append(kwargs["values"])
+    )
+    app.model_name.set("gemini-3.5-flash")
+
+    assert app._commit_model_selection() is True
+
+    assert app.config.saved_models == ("gemini-custom-old",)
+    assert "gemini-custom-old" in configured_values[-1]
 
 
 def test_model_change_invalidates_analyzed_chapter(tmp_path: Path) -> None:

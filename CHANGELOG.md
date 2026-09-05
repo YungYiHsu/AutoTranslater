@@ -6,7 +6,7 @@
 
 ### 新增
 
-- GUI 新增可編輯的 Gemini 模型選單，提供 3.5 Flash／Flash-Lite，並將選擇或手動輸入的 Model ID 自動保存至 `config.json`。
+- GUI 新增可編輯的 Gemini 模型選單，提供 3.5 Flash／Flash-Lite；手動輸入的 Model ID 會保存至 `config.json` 並永久加入下拉選單。
 
 ## 0.1.0 - 2026-09-05
 

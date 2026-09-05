@@ -166,7 +166,7 @@ class DesktopApp:
         self.model_entry = ttk.Combobox(
             model_frame,
             textvariable=self.model_name,
-            values=_GEMINI_MODEL_CHOICES,
+            values=self._available_model_choices(),
             state="normal",
         )
         self.model_entry.grid(row=0, column=1, sticky="ew", padx=(8, 0))
@@ -1171,6 +1171,10 @@ class DesktopApp:
     def _on_model_committed(self, _event: object) -> None:
         self._commit_model_selection()
 
+    def _available_model_choices(self) -> tuple[str, ...]:
+        choices = (*_GEMINI_MODEL_CHOICES, *self.config.saved_models, self.config.model)
+        return tuple(dict.fromkeys(choice for choice in choices if choice))
+
     def _commit_model_selection(self) -> bool:
         selected = self.model_name.get().strip()
         if not selected:
@@ -1185,7 +1189,15 @@ class DesktopApp:
             self.model_name.set(selected)
             return True
 
-        updated = replace(self.config, model=selected)
+        saved_models = list(self.config.saved_models)
+        for candidate in (self.config.model, selected):
+            if (
+                candidate
+                and candidate not in _GEMINI_MODEL_CHOICES
+                and candidate not in saved_models
+            ):
+                saved_models.append(candidate)
+        updated = replace(self.config, model=selected, saved_models=tuple(saved_models))
         try:
             write_config(updated, self.app_directory / "config.json")
         except OSError as exc:
@@ -1199,6 +1211,7 @@ class DesktopApp:
 
         self.config = updated
         self.model_name.set(selected)
+        self.model_entry.configure(values=self._available_model_choices())
         self._term_organization_service = None
         if self.plan is not None or self.controller is not None:
             self.plan = None

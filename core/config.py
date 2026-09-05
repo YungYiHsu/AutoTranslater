@@ -31,6 +31,7 @@ class AppConfig:
     """Validated non-secret application settings."""
 
     model: str = ""
+    saved_models: tuple[str, ...] = ()
     output_directory: str = "outputs"
     chunk_size: int = 4000
     retry_attempts: int = 3
@@ -39,19 +40,35 @@ class AppConfig:
     def from_mapping(cls, values: Mapping[str, Any]) -> AppConfig:
         """Create settings from JSON-compatible values and validate them."""
         defaults = cls()
-        known_fields = {"model", "output_directory", "chunk_size", "retry_attempts"}
+        known_fields = {
+            "model",
+            "saved_models",
+            "output_directory",
+            "chunk_size",
+            "retry_attempts",
+        }
         unknown = set(values) - known_fields
         if unknown:
             names = ", ".join(sorted(unknown))
             raise ConfigurationError(f"Unknown config field(s): {names}")
 
         model = values.get("model", defaults.model)
+        saved_models = values.get("saved_models", defaults.saved_models)
         output_directory = values.get("output_directory", defaults.output_directory)
         chunk_size = values.get("chunk_size", defaults.chunk_size)
         retry_attempts = values.get("retry_attempts", defaults.retry_attempts)
 
         if not isinstance(model, str):
             raise ConfigurationError("model must be a string")
+        if not isinstance(saved_models, (list, tuple)) or isinstance(saved_models, str):
+            raise ConfigurationError("saved_models must be a list of non-empty strings")
+        normalized_saved_models: list[str] = []
+        for saved_model in saved_models:
+            if not isinstance(saved_model, str) or not saved_model.strip():
+                raise ConfigurationError("saved_models must contain non-empty strings")
+            normalized = saved_model.strip()
+            if normalized not in normalized_saved_models:
+                normalized_saved_models.append(normalized)
         if not isinstance(output_directory, str) or not output_directory.strip():
             raise ConfigurationError("output_directory must be a non-empty string")
         if not isinstance(chunk_size, int) or isinstance(chunk_size, bool) or chunk_size <= 0:
@@ -65,6 +82,7 @@ class AppConfig:
 
         return cls(
             model=model,
+            saved_models=tuple(normalized_saved_models),
             output_directory=output_directory,
             chunk_size=chunk_size,
             retry_attempts=retry_attempts,

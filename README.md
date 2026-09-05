@@ -16,7 +16,7 @@
 
 - 輸入作品首頁或章節網址；章節網址會自動拆分為作品與章節。
 - 從本機作品下拉選單快速載入既有作品。
-- 在 GUI 選擇 Gemini 3.5 Flash／Flash-Lite，或手動輸入其他 Model ID；變更後自動寫入 `config.json`。
+- 在 GUI 選擇 Gemini 3.5 Flash／Flash-Lite，或手動輸入其他 Model ID；自訂項目會永久加入下拉選單並寫入 `config.json`。
 - 讀取作品名稱、作者、摘要與章節目錄。
 - 首次選擇作品時翻譯作品名稱及摘要，建立作品專屬資料夾與 `work.json`。
 - 以數字選擇章節，並顯示下一個待翻譯章節。
@@ -61,6 +61,7 @@ GEMINI_API_KEY="你的 API Key"
 ```json
 {
   "model": "gemini-3.5-flash",
+  "saved_models": [],
   "output_directory": "outputs",
   "chunk_size": 4000,
   "retry_attempts": 3

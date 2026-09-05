@@ -34,6 +34,7 @@ def test_load_config_accepts_valid_values(tmp_path: Path) -> None:
         json.dumps(
             {
                 "model": "test-model",
+                "saved_models": [" custom-a ", "custom-b", "custom-a"],
                 "output_directory": "results",
                 "chunk_size": 2000,
                 "retry_attempts": 5,
@@ -45,6 +46,7 @@ def test_load_config_accepts_valid_values(tmp_path: Path) -> None:
     config = load_config(config_path)
 
     assert config.provider == "gemini"
+    assert config.saved_models == ("custom-a", "custom-b")
     assert config.chunk_size == 2000
 
 
@@ -55,6 +57,9 @@ def test_load_config_accepts_valid_values(tmp_path: Path) -> None:
         {"provider": "unknown"},
         {"chunk_size": 0},
         {"retry_attempts": -1},
+        {"saved_models": "not-a-list"},
+        {"saved_models": [""]},
+        {"saved_models": [123]},
         {"unexpected": True},
     ],
 )
