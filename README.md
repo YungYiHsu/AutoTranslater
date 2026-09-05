@@ -6,6 +6,12 @@
 
 ![AutoTranslater 主畫面](docs/screenshots/main-window.png)
 
+## 下載 Windows 版本
+
+[下載 AutoTranslater v0.1.0 Windows ZIP](https://github.com/YungYiHsu/AutoTranslater/releases/download/v0.1.0/AutoTranslater-v0.1.0-win64.zip)
+
+下載後請完整解壓縮，再執行 `AutoTranslater.exe`。私人儲存庫的附件需要先登入具有存取權限的 GitHub 帳號。
+
 ## 目前功能
 
 - 輸入作品首頁或章節網址；章節網址會自動拆分為作品與章節。
