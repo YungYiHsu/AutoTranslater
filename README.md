@@ -10,7 +10,7 @@
 
 [下載 AutoTranslater v0.1.0 Windows ZIP](https://github.com/YungYiHsu/AutoTranslater/releases/download/v0.1.0/AutoTranslater-v0.1.0-win64.zip)
 
-下載後請完整解壓縮，再執行 `AutoTranslater.exe`。私人儲存庫的附件需要先登入具有存取權限的 GitHub 帳號。
+下載後請完整解壓縮，再執行 `AutoTranslater.exe`。ZIP 根目錄已直接包含程式檔，不會再多包一層 `AutoTranslater/`。私人儲存庫的附件需要先登入具有存取權限的 GitHub 帳號。
 
 ## 目前功能
 
@@ -139,7 +139,7 @@ Get-FileHash .\AutoTranslater-v0.1.0-win64.zip -Algorithm SHA256
 目前 `v0.1.0` Windows ZIP 的 SHA-256：
 
 ```text
-11A9DF40E909F636D9C692A35B48D389A1124257A53A56E2AEE27710EBDEEDA6
+57AEC48C9FC1E86AAD682E593BEDB1E53E15371D5941C31BC0221775FF5CBA72
 ```
 
 ## 使用流程

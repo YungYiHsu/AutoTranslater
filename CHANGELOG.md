@@ -18,6 +18,10 @@
 - Gemini 免費額度耗盡的專用錯誤提示。
 - GUI 內編輯章節及作品資料翻譯 Prompt。
 
+### 改善
+
+- Windows 發布 ZIP 改為直接包含 EXE、設定檔與 `_internal/`，解壓縮後不再多一層 `AutoTranslater/`。
+
 ### 限制
 
 - 目前只支援「成為小說家吧」的數字章節連載作品。
