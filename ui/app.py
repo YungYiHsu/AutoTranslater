@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import queue
+from dataclasses import replace
 from pathlib import Path
 from tkinter import END, StringVar, Text, Tk, Toplevel, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
@@ -16,7 +17,14 @@ from core.bootstrap import (
     build_work_setup_service,
 )
 from core.chapter_progress import ChapterCompletionTracker, ChapterProgress
-from core.config import AppConfig, get_api_key, load_config, load_environment, save_api_key
+from core.config import (
+    AppConfig,
+    get_api_key,
+    load_config,
+    load_environment,
+    save_api_key,
+    write_config,
+)
 from core.controller import (
     ProgressUpdate,
     TranslationController,
@@ -65,6 +73,11 @@ _WORK_PROGRESS_TEXT = {
     "completed": "作品資料準備完成。",
 }
 
+_GEMINI_MODEL_CHOICES = (
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+)
+
 
 class DesktopApp:
     """Own widgets and translate worker messages into main-thread UI updates."""
@@ -105,6 +118,7 @@ class DesktopApp:
         }
 
         self.url = StringVar()
+        self.model_name = StringVar(value=self.config.model)
         self.chapter_number = StringVar()
         self.mode = StringVar(value="gemini")
         self.japanese_work = StringVar(value="尚未選擇作品")
@@ -123,8 +137,8 @@ class DesktopApp:
 
     def _configure_window(self) -> None:
         self.root.title("日文小說繁體中文翻譯器")
-        self.root.geometry("860x760")
-        self.root.minsize(720, 660)
+        self.root.geometry("860x820")
+        self.root.minsize(720, 700)
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
 
@@ -145,8 +159,28 @@ class DesktopApp:
             outer, text="日文小說繁體中文翻譯器", font=("Microsoft JhengHei UI", 18, "bold")
         ).grid(row=0, column=0, sticky="w", pady=(0, 14))
 
+        model_frame = ttk.LabelFrame(outer, text="Gemini 模型", padding=12)
+        model_frame.grid(row=1, column=0, sticky="ew")
+        model_frame.columnconfigure(1, weight=1)
+        ttk.Label(model_frame, text="模型：").grid(row=0, column=0, sticky="w")
+        self.model_entry = ttk.Combobox(
+            model_frame,
+            textvariable=self.model_name,
+            values=_GEMINI_MODEL_CHOICES,
+            state="normal",
+        )
+        self.model_entry.grid(row=0, column=1, sticky="ew", padx=(8, 0))
+        self.model_entry.bind("<<ComboboxSelected>>", self._on_model_committed)
+        self.model_entry.bind("<Return>", self._on_model_committed)
+        self.model_entry.bind("<FocusOut>", self._on_model_committed)
+        ttk.Label(
+            model_frame,
+            text="可從清單選擇或輸入完整 Model ID；選擇、按 Enter 或離開欄位時自動儲存。",
+            foreground="#666666",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
         url_frame = ttk.LabelFrame(outer, text="作品首頁", padding=12)
-        url_frame.grid(row=1, column=0, sticky="ew")
+        url_frame.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         url_frame.columnconfigure(0, weight=1)
         self.url_entry = ttk.Combobox(
             url_frame,
@@ -167,7 +201,7 @@ class DesktopApp:
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         work_frame = ttk.LabelFrame(outer, text="作品資訊", padding=12)
-        work_frame.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        work_frame.grid(row=3, column=0, sticky="ew", pady=(12, 0))
         ttk.Label(
             work_frame,
             textvariable=self.japanese_work,
@@ -183,7 +217,7 @@ class DesktopApp:
         )
 
         chapter_frame = ttk.LabelFrame(outer, text="章節選擇", padding=12)
-        chapter_frame.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        chapter_frame.grid(row=4, column=0, sticky="ew", pady=(12, 0))
         ttk.Label(chapter_frame, text="章節數字：").grid(row=0, column=0, sticky="w")
         self.chapter_entry = ttk.Entry(chapter_frame, textvariable=self.chapter_number, width=12)
         self.chapter_entry.grid(row=0, column=1, sticky="w", padx=(0, 8))
@@ -196,7 +230,7 @@ class DesktopApp:
         )
 
         mode_frame = ttk.LabelFrame(outer, text="執行模式", padding=12)
-        mode_frame.grid(row=4, column=0, sticky="ew", pady=(12, 0))
+        mode_frame.grid(row=5, column=0, sticky="ew", pady=(12, 0))
         modes = (
             ("Gemini 真實翻譯", "gemini"),
             ("本地模型（待開發）", "local"),
@@ -214,8 +248,8 @@ class DesktopApp:
             self.mode_buttons.append(button)
 
         summary_frame = ttk.LabelFrame(outer, text="章節資訊", padding=(12, 12, 12, 18))
-        summary_frame.grid(row=5, column=0, sticky="nsew", pady=(12, 0))
-        outer.rowconfigure(5, weight=1)
+        summary_frame.grid(row=6, column=0, sticky="nsew", pady=(12, 0))
+        outer.rowconfigure(6, weight=1)
         ttk.Label(
             summary_frame,
             textvariable=self.summary,
@@ -225,7 +259,7 @@ class DesktopApp:
         ).pack(anchor="nw", fill="both", expand=True)
 
         progress_frame = ttk.Frame(outer)
-        progress_frame.grid(row=6, column=0, sticky="ew", pady=(12, 4))
+        progress_frame.grid(row=7, column=0, sticky="ew", pady=(12, 4))
         progress_frame.columnconfigure(1, weight=1)
         self.spinner = LoadingSpinner(progress_frame)
         self.spinner.grid(row=0, column=0, sticky="w", padx=(0, 10))
@@ -233,7 +267,7 @@ class DesktopApp:
         ttk.Label(progress_frame, textvariable=self.status).grid(row=0, column=1, sticky="w")
 
         actions = ttk.Frame(outer)
-        actions.grid(row=7, column=0, sticky="ew", pady=(12, 0))
+        actions.grid(row=8, column=0, sticky="ew", pady=(12, 0))
         self.start_button = ttk.Button(actions, text="開始翻譯", command=self.start)
         self.start_button.pack(side="left")
         self.cancel_button = ttk.Button(actions, text="取消", command=self.cancel)
@@ -376,6 +410,8 @@ class DesktopApp:
         self.root.destroy()
 
     def select_work(self) -> None:
+        if not self._commit_model_selection():
+            return
         entered_url = self.url.get().strip()
         if not entered_url:
             messagebox.showwarning("缺少網址", "請先輸入作品首頁網址。", parent=self.root)
@@ -399,6 +435,8 @@ class DesktopApp:
             self._show_error(exc)
 
     def refresh_catalog(self) -> None:
+        if not self._commit_model_selection():
+            return
         entered_url = self.work.source_url if self.work is not None else self.url.get().strip()
         if not entered_url:
             messagebox.showwarning("缺少網址", "請先輸入作品首頁或章節網址。", parent=self.root)
@@ -432,6 +470,8 @@ class DesktopApp:
             self._show_error(exc)
 
     def analyze_chapter(self) -> None:
+        if not self._commit_model_selection():
+            return
         if self.work is None:
             messagebox.showwarning(
                 "尚未選擇作品", "請先輸入作品首頁網址並選擇作品。", parent=self.root
@@ -480,6 +520,8 @@ class DesktopApp:
             self._show_error(exc)
 
     def start(self) -> None:
+        if not self._commit_model_selection():
+            return
         if self.plan is None or self.controller is None:
             return
         selected = self.mode.get()
@@ -659,6 +701,8 @@ class DesktopApp:
             self._show_error(exc)
 
     def organize_terms(self) -> None:
+        if not self._commit_model_selection():
+            return
         if self.work_result is None:
             return
         api_key = self._get_or_request_api_key()
@@ -1090,6 +1134,7 @@ class DesktopApp:
             "organizing_terms",
         }
         work_ready = state in {"work_ready", "chapter_ready"}
+        self.model_entry.configure(state="disabled" if busy else "normal")
         self.url_entry.configure(state="disabled" if busy else "normal")
         self.select_work_button.configure(state="disabled" if busy else "normal")
         can_refresh_catalog = not busy and self.work_result is not None
@@ -1122,6 +1167,52 @@ class DesktopApp:
         source_url = self._local_work_urls.get(self.url.get())
         if source_url is not None:
             self.url.set(source_url)
+
+    def _on_model_committed(self, _event: object) -> None:
+        self._commit_model_selection()
+
+    def _commit_model_selection(self) -> bool:
+        selected = self.model_name.get().strip()
+        if not selected:
+            self.model_name.set(self.config.model)
+            messagebox.showwarning(
+                "模型不可空白",
+                "請選擇或輸入完整的 Gemini Model ID。",
+                parent=self.root,
+            )
+            return False
+        if selected == self.config.model:
+            self.model_name.set(selected)
+            return True
+
+        updated = replace(self.config, model=selected)
+        try:
+            write_config(updated, self.app_directory / "config.json")
+        except OSError as exc:
+            self.model_name.set(self.config.model)
+            messagebox.showerror(
+                "模型儲存失敗",
+                f"無法寫入 config.json：\n{exc}",
+                parent=self.root,
+            )
+            return False
+
+        self.config = updated
+        self.model_name.set(selected)
+        self._term_organization_service = None
+        if self.plan is not None or self.controller is not None:
+            self.plan = None
+            self.controller = None
+            self.result = None
+            self._analyzed_mode = None
+            if self.work_result is not None:
+                self.summary.set("模型已變更，請重新分析章節後再開始翻譯。")
+                self._apply_state("work_ready", f"模型已儲存：{selected}；請重新分析章節。")
+            else:
+                self._apply_state("idle", f"模型已儲存：{selected}")
+        else:
+            self._apply_state(self.state, f"模型已儲存：{selected}")
+        return True
 
     def _reload_local_work_choices(self) -> None:
         self._local_work_urls = {

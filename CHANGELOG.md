@@ -2,6 +2,12 @@
 
 本文件記錄 AutoTranslater 各版本的重要變更。
 
+## 尚未發布
+
+### 新增
+
+- GUI 新增可編輯的 Gemini 模型選單，提供 3.5 Flash／Flash-Lite，並將選擇或手動輸入的 Model ID 自動保存至 `config.json`。
+
 ## 0.1.0 - 2026-09-05
 
 ### 新增
