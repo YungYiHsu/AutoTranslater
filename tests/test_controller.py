@@ -37,6 +37,8 @@ class RecordingTranslator(BaseTranslator):
     def __init__(self, *, fail_at: int | None = None, return_foreign: bool = False) -> None:
         self.calls: list[int] = []
         self.term_calls: list[dict[str, str]] = []
+        self.title_calls: list[str] = []
+        self.title_term_calls: list[dict[str, str]] = []
         self.fail_at = fail_at
         self.return_foreign = return_foreign
 
@@ -62,13 +64,18 @@ class RecordingTranslator(BaseTranslator):
         if chunk.index == self.fail_at:
             raise RuntimeError("simulated interruption")
         source = TextChunk(index=chunk.index, text="foreign") if self.return_foreign else chunk
-        return TranslatedChunk(source_chunk=source, translated_text=f"譯文 {chunk.index}")
+        return TranslatedChunk(
+            source_chunk=source,
+            translated_text=f"譯文 {chunk.index}",
+        )
 
     def translate_title(
         self,
         title: str,
         terms: Mapping[str, str] | None = None,
     ) -> str:
+        self.title_calls.append(title)
+        self.title_term_calls.append(dict(terms or {}))
         return f"譯名：{title}"
 
 
@@ -171,6 +178,20 @@ def test_existing_terms_are_matched_once_and_supplied_to_every_chunk(tmp_path: P
     assert translator.term_calls == [{"一": "壹", "三": "參"}] * 3
 
 
+def test_existing_term_used_only_in_chapter_title_is_supplied_to_first_chunk(
+    tmp_path: Path,
+) -> None:
+    work_directory = tmp_path / "outputs" / "測試作品"
+    work_directory.mkdir(parents=True)
+    (work_directory / "terms.json").write_text('{"第一章":"序章"}', encoding="utf-8")
+    controller, translator, _ = make_controller(tmp_path)
+
+    controller.run(controller.prepare("url"))
+
+    assert translator.term_calls[0] == {"第一章": "序章"}
+    assert translator.title_term_calls == [{"第一章": "序章"}]
+
+
 def test_term_analysis_updates_after_outputs_and_failure_is_nonfatal(tmp_path: Path) -> None:
     analyzer = RecordingTermAnalyzer({"一": "譯文"})
     controller, _, _ = make_controller(tmp_path, analyzer=analyzer)
@@ -221,13 +242,13 @@ def test_run_translates_checkpoints_and_formats_complete_chapter(tmp_path: Path)
     )
     assert all(formatter.chapters == [result.chapter] for formatter in formatters)
     assert updates == [
+        ProgressUpdate(0, 3, "translating_title"),
         ProgressUpdate(1, 3, "translating"),
         ProgressUpdate(1, 3, "translated"),
         ProgressUpdate(2, 3, "translating"),
         ProgressUpdate(2, 3, "translated"),
         ProgressUpdate(3, 3, "translating"),
         ProgressUpdate(3, 3, "translated"),
-        ProgressUpdate(0, 0, "translating_title"),
     ]
 
 
@@ -235,7 +256,14 @@ def test_run_resumes_and_reports_checkpoint_chunks(tmp_path: Path) -> None:
     store = CheckpointStore(tmp_path / "checkpoints")
     first_controller, first_translator, _ = make_controller(tmp_path, store=store)
     plan = first_controller.prepare("https://example.test/1")
-    store.save_chunk(plan.checkpoint_job, first_translator.translate(plan.chunks[0]))
+    store.save_chunk(
+        plan.checkpoint_job,
+        TranslatedChunk(
+            plan.chunks[0],
+            first_translator.translate(plan.chunks[0]).translated_text,
+            first_translator.translate_title(plan.source_chapter.chapter_title),
+        ),
+    )
     store.save_chunk(plan.checkpoint_job, first_translator.translate(plan.chunks[1]))
 
     resumed_controller, resumed_translator, _ = make_controller(tmp_path, store=store)
@@ -251,8 +279,27 @@ def test_run_resumes_and_reports_checkpoint_chunks(tmp_path: Path) -> None:
         "checkpoint",
         "translating",
         "translated",
-        "translating_title",
     ]
+
+
+def test_explicit_retranslation_clears_checkpoint(tmp_path: Path) -> None:
+    store = CheckpointStore(tmp_path / "checkpoints")
+    controller, translator, _ = make_controller(tmp_path, store=store)
+    plan = controller.prepare("https://example.test/1")
+    first = translator.translate(plan.chunks[0])
+    store.save_chunk(
+        plan.checkpoint_job,
+        TranslatedChunk(
+            plan.chunks[0],
+            first.translated_text,
+            translator.translate_title(plan.source_chapter.chapter_title),
+        ),
+    )
+
+    assert len(store.load(plan.checkpoint_job)) == 1
+    assert controller.clear_checkpoint(plan) is True
+    assert store.load(plan.checkpoint_job) == ()
+    assert controller.clear_checkpoint(plan) is False
 
 
 def test_interruption_leaves_latest_completed_checkpoint(tmp_path: Path) -> None:
@@ -277,7 +324,8 @@ def test_cancellation_stops_between_chunks_and_keeps_progress(tmp_path: Path) ->
 
     def progress(_update: ProgressUpdate) -> None:
         nonlocal cancelled
-        cancelled = True
+        if _update.source == "translating":
+            cancelled = True
 
     with pytest.raises(TranslationCancelled):
         controller.run(plan, progress=progress, should_cancel=lambda: cancelled)

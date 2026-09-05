@@ -163,11 +163,19 @@ class TranslatedChunk:
 
     source_chunk: TextChunk
     translated_text: str
+    translated_chapter_title: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_chunk, TextChunk):
             raise TypeError("source_chunk must be a TextChunk")
         _require_non_blank(self.translated_text, "translated_text")
+        if self.translated_chapter_title is not None:
+            _require_non_blank(self.translated_chapter_title, "translated_chapter_title")
+            object.__setattr__(
+                self,
+                "translated_chapter_title",
+                self.translated_chapter_title.strip(),
+            )
 
     @property
     def index(self) -> int:

@@ -11,6 +11,7 @@ from core.exceptions import WorkMemoryError
 from core.models import NovelChapterEntry
 from core.work_memory import ChapterCompletion, WorkMemoryStore, text_hash
 from core.work_setup import WorkSetupResult
+from formatters.html_navigation import HtmlNavigationManager
 from formatters.utils import sanitize_filename_component
 
 
@@ -27,8 +28,15 @@ class ChapterProgress:
 class ChapterCompletionTracker:
     """Reconcile fixed output files and update compact completion records."""
 
-    def __init__(self, memory_store: WorkMemoryStore | None = None) -> None:
+    def __init__(
+        self,
+        memory_store: WorkMemoryStore | None = None,
+        navigation_manager: HtmlNavigationManager | None = None,
+    ) -> None:
         self._memory_store = memory_store or WorkMemoryStore()
+        self._navigation_manager = navigation_manager or HtmlNavigationManager()
+        self._output_indexes: dict[Path, dict[int, tuple[Path, Path]]] = {}
+        self._progress_cache: dict[Path, ChapterProgress] = {}
 
     def reconcile(self, setup: WorkSetupResult) -> ChapterProgress:
         work = setup.work.source_work
@@ -38,6 +46,7 @@ class ChapterCompletionTracker:
         completions = dict(memory.completed_chapters)
         completed: set[int] = set()
         partial: set[int] = set()
+        output_index: dict[int, tuple[Path, Path]] = {}
         changed = False
         for chapter in work.chapters:
             txt_path, html_path = self.output_paths(setup, chapter)
@@ -45,8 +54,11 @@ class ChapterCompletionTracker:
             if not any(exists):
                 legacy_txt, legacy_html = self._legacy_output_paths(setup, chapter)
                 exists = (legacy_txt.exists(), legacy_html.exists())
+                if any(exists):
+                    txt_path, html_path = legacy_txt, legacy_html
             if all(exists):
                 completed.add(chapter.number)
+                output_index[chapter.number] = (txt_path, html_path)
                 if chapter.number not in completions:
                     completions[chapter.number] = ChapterCompletion(
                         source_hash="",
@@ -63,12 +75,19 @@ class ChapterCompletionTracker:
         ]
         all_completed = not unfinished
         next_number = work.chapters[-1].number if all_completed else unfinished[0]
-        return ChapterProgress(
+        progress = ChapterProgress(
             completed_numbers=frozenset(completed),
             partial_numbers=frozenset(partial),
             next_number=next_number,
             all_completed=all_completed,
         )
+        key = setup.work_directory.resolve()
+        self._output_indexes[key] = output_index
+        self._progress_cache[key] = progress
+        self._navigation_manager.refresh_all(
+            {number: paths[1] for number, paths in output_index.items()}
+        )
+        return progress
 
     def record_completed(
         self,
@@ -100,7 +119,46 @@ class ChapterCompletionTracker:
             completed_at=datetime.now(UTC).isoformat(),
         )
         self._memory_store.save_completions(setup.work_directory, work, completions)
-        return self.reconcile(setup)
+        key = setup.work_directory.resolve()
+        if key not in self._output_indexes:
+            return self.reconcile(setup)
+
+        output_index = self._output_indexes[key]
+        output_index[number] = (txt_path, html_path)
+        previous = self._progress_cache[key]
+        completed = set(previous.completed_numbers)
+        completed.add(number)
+        partial = set(previous.partial_numbers)
+        partial.discard(number)
+        progress = self._build_progress(setup, completed, partial)
+        self._progress_cache[key] = progress
+        self._navigation_manager.refresh_neighbors(
+            {item: paths[1] for item, paths in output_index.items()},
+            number,
+        )
+        return progress
+
+    @staticmethod
+    def _build_progress(
+        setup: WorkSetupResult,
+        completed: set[int],
+        partial: set[int],
+    ) -> ChapterProgress:
+        unfinished = [
+            chapter.number
+            for chapter in setup.work.source_work.chapters
+            if chapter.number not in completed
+        ]
+        all_completed = not unfinished
+        next_number = (
+            setup.work.source_work.chapters[-1].number if all_completed else unfinished[0]
+        )
+        return ChapterProgress(
+            completed_numbers=frozenset(completed),
+            partial_numbers=frozenset(partial),
+            next_number=next_number,
+            all_completed=all_completed,
+        )
 
     def completion_for(
         self, setup: WorkSetupResult, chapter_number: int

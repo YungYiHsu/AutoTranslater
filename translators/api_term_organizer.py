@@ -15,6 +15,10 @@ from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait
 from core.config import AppConfig
 from core.exceptions import TermMemoryError
 from core.paths import get_resource_path
+from core.prompt_composer import (
+    compose_term_organization_prompt,
+    validate_term_organization_template,
+)
 from core.term_organizer import TermOrganizationProposal
 from translators.gemini_errors import raise_if_free_tier_quota
 from translators.organizer_base import BaseTermOrganizer
@@ -68,11 +72,13 @@ class ApiTermOrganizer(BaseTermOrganizer):
         self._retry_attempts = retry_attempts
         path = prompt_path or get_resource_path("resources/prompts/term_organization.txt")
         try:
-            self._prompt = path.read_text(encoding="utf-8-sig").strip()
+            editable_prompt = path.read_text(encoding="utf-8-sig").strip()
         except (OSError, UnicodeError) as exc:
             raise TermMemoryError("無法讀取專有名詞整理 Prompt。") from exc
-        if not self._prompt:
+        if not editable_prompt:
             raise TermMemoryError("專有名詞整理 Prompt 不可為空白。")
+        validate_term_organization_template(editable_prompt)
+        self._prompt = editable_prompt
         self._client = client or self._create_client()
         self._sleeper = sleeper
         self._max_batch_terms = max_batch_terms
@@ -94,15 +100,11 @@ class ApiTermOrganizer(BaseTermOrganizer):
     def organize(
         self,
         terms: Mapping[str, str],
-    ) -> tuple[TermOrganizationProposal, ...]:
+    ) -> TermOrganizationProposal:
         if len(terms) < 2:
-            return ()
-        content = json.dumps(
-            {"terms": dict(terms)},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        return self._request(content)
+            return TermOrganizationProposal((), ())
+        prompt = compose_term_organization_prompt(self._prompt, terms)
+        return self._request(prompt)
 
     def _build_batches(self, terms: Mapping[str, str]) -> tuple[dict[str, str], ...]:
         if len(terms) < 2:
@@ -137,7 +139,7 @@ class ApiTermOrganizer(BaseTermOrganizer):
             start = end - overlap
         return tuple(batches)
 
-    def _request(self, content: str) -> tuple[TermOrganizationProposal, ...]:
+    def _request(self, prompt: str) -> TermOrganizationProposal:
         retrying = Retrying(
             stop=stop_after_attempt(self._retry_attempts + 1),
             wait=wait_exponential(multiplier=0.5, min=0.5, max=8),
@@ -146,18 +148,17 @@ class ApiTermOrganizer(BaseTermOrganizer):
             sleep=self._sleeper,
         )
         try:
-            raw = retrying(self._request_once, content)
+            raw = retrying(self._request_once, prompt)
         except _RetryableOrganizationError as exc:
             raise TermMemoryError("Gemini 專有名詞整理重試後仍無法完成。") from exc
         return self._parse_response(raw)
 
-    def _request_once(self, content: str) -> Any:
+    def _request_once(self, prompt: str) -> Any:
         try:
             response = self._client.models.generate_content(
                 model=self._model,
-                contents=content,
+                contents=prompt,
                 config={
-                    "system_instruction": self._prompt,
                     "temperature": 0.1,
                     "response_mime_type": "application/json",
                 },
@@ -172,7 +173,7 @@ class ApiTermOrganizer(BaseTermOrganizer):
             ) from exc
 
     @staticmethod
-    def _parse_response(value: Any) -> tuple[TermOrganizationProposal, ...]:
+    def _parse_response(value: Any) -> TermOrganizationProposal:
         if not isinstance(value, str) or not value.strip():
             raise TermMemoryError("Gemini 回傳了空白的專有名詞整理結果。")
         fenced = _CODE_FENCE.fullmatch(value)
@@ -182,35 +183,32 @@ class ApiTermOrganizer(BaseTermOrganizer):
             payload = json.loads(value)
         except json.JSONDecodeError as exc:
             raise TermMemoryError("Gemini 回傳的專有名詞整理結果不是有效 JSON。") from exc
-        if not isinstance(payload, dict) or set(payload) != {"groups"}:
+        if not isinstance(payload, dict) or set(payload) != {"add", "remove"}:
             raise TermMemoryError("Gemini 專有名詞整理結果欄位不正確。")
-        groups = payload["groups"]
-        if not isinstance(groups, list):
-            raise TermMemoryError("Gemini 專有名詞整理 groups 必須是陣列。")
-        result: list[TermOrganizationProposal] = []
-        for group in groups:
-            if not isinstance(group, dict) or set(group) != {"source", "translation", "remove"}:
-                raise TermMemoryError("Gemini 專有名詞整理群組格式不正確。")
-            source = group["source"]
-            translation = group["translation"]
-            remove = group["remove"]
+        additions = payload["add"]
+        removals = payload["remove"]
+        if not isinstance(additions, list) or not isinstance(removals, list):
+            raise TermMemoryError("Gemini 專有名詞整理 add 與 remove 必須是陣列。")
+        parsed_additions: list[tuple[str, str]] = []
+        for addition in additions:
+            if not isinstance(addition, dict) or set(addition) != {"source", "translation"}:
+                raise TermMemoryError("Gemini 專有名詞整理 add 項目格式不正確。")
+            source = addition["source"]
+            translation = addition["translation"]
             if (
                 not isinstance(source, str)
                 or not isinstance(translation, str)
                 or not source.strip()
                 or not translation.strip()
-                or not isinstance(remove, list)
-                or not all(isinstance(item, str) and item.strip() for item in remove)
             ):
-                raise TermMemoryError("Gemini 專有名詞整理群組含有無效內容。")
-            result.append(
-                TermOrganizationProposal(
-                    source.strip(),
-                    translation.strip(),
-                    tuple(item.strip() for item in remove),
-                )
-            )
-        return tuple(result)
+                raise TermMemoryError("Gemini 專有名詞整理 add 項目含有無效內容。")
+            pair = (source.strip(), translation.strip())
+            if pair not in parsed_additions:
+                parsed_additions.append(pair)
+        if not all(isinstance(item, str) and item.strip() for item in removals):
+            raise TermMemoryError("Gemini 專有名詞整理 remove 含有無效內容。")
+        parsed_removals = tuple(dict.fromkeys(item.strip() for item in removals))
+        return TermOrganizationProposal(tuple(parsed_additions), parsed_removals)
 
     @staticmethod
     def _is_retryable(exc: Exception) -> bool:

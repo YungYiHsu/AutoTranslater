@@ -112,13 +112,28 @@ class TranslationController:
     def model(self) -> str:
         return self._translator.model
 
+    def clear_checkpoint(self, plan: TranslationPlan) -> bool:
+        """Remove this exact plan's checkpoint before an explicit full retranslation."""
+        if not isinstance(plan, TranslationPlan):
+            raise TypeError("plan must be a TranslationPlan")
+        if (
+            plan.checkpoint_job.provider != self.provider
+            or plan.checkpoint_job.model != self.model
+            or plan.checkpoint_job.chunks != plan.chunks
+        ):
+            raise ValueError("plan is incompatible with the configured controller")
+        return self._checkpoint_store.clear(plan.checkpoint_job)
+
     def prepare(self, url: str) -> TranslationPlan:
         """Extract, split, and inspect reusable progress without translating."""
         source_chapter = self._extractor.extract(url)
         chunks = self._chunker.split(source_chapter.original_text)
         work_directory = self._work_directory(source_chapter)
         terms = self._term_memory_store.load(work_directory)
-        matched_terms = self._term_memory_store.match(source_chapter.original_text, terms)
+        matched_terms = self._term_memory_store.match(
+            f"{source_chapter.chapter_title}\n{source_chapter.original_text}",
+            terms,
+        )
         job = CheckpointJob.create(
             source_chapter=source_chapter,
             chunks=chunks,
@@ -156,6 +171,9 @@ class TranslationController:
         completed = list(self._checkpoint_store.load(plan.checkpoint_job))
         reused_count = len(completed)
         temporary_terms = dict(plan.matched_terms)
+        translated_chapter_title = (
+            completed[0].translated_chapter_title if completed else None
+        )
         new_terms: dict[str, str] = {}
         term_errors: list[str] = []
         term_rejected = 0
@@ -175,6 +193,16 @@ class TranslationController:
             if error:
                 term_errors.append(error)
 
+        if translated_chapter_title is None:
+            if should_cancel and should_cancel():
+                raise TranslationCancelled("Translation was cancelled by the user.")
+            if progress:
+                progress(ProgressUpdate(0, plan.total_chunks, "translating_title"))
+            translated_chapter_title = self._translator.translate_title(
+                plan.source_chapter.chapter_title,
+                temporary_terms,
+            )
+
         translated_count = 0
         for source_chunk in plan.chunks[reused_count:]:
             if should_cancel and should_cancel():
@@ -187,9 +215,18 @@ class TranslationController:
                         "translating",
                     )
                 )
-            translated = self._translator.translate(source_chunk, temporary_terms)
+            translated = self._translator.translate(
+                source_chunk,
+                temporary_terms,
+            )
             if translated.source_chunk != source_chunk:
                 raise ValueError("translator returned a result for a different source chunk")
+            if source_chunk.index == 0:
+                translated = TranslatedChunk(
+                    source_chunk=source_chunk,
+                    translated_text=translated.translated_text,
+                    translated_chapter_title=translated_chapter_title,
+                )
             self._checkpoint_store.save_chunk(plan.checkpoint_job, translated)
             completed.append(translated)
             translated_count += 1
@@ -215,12 +252,8 @@ class TranslationController:
 
         if should_cancel and should_cancel():
             raise TranslationCancelled("Translation was cancelled by the user.")
-        if progress:
-            progress(ProgressUpdate(0, 0, "translating_title"))
-        translated_chapter_title = self._translator.translate_title(
-            plan.source_chapter.chapter_title,
-            temporary_terms,
-        )
+        if not translated_chapter_title:
+            raise ValueError("first translated chunk did not include a translated chapter title")
         chapter = TranslatedChapter(
             source_chapter=plan.source_chapter,
             chunks=tuple(completed),
@@ -285,6 +318,7 @@ class TranslationController:
             provider=self.provider,
             model=self.model,
             translated_work_title=plan.translated_work_title,
+            translated_chapter_title=translated.translated_chapter_title,
         )
         try:
             candidates = self._term_analyzer.analyze(chunk_chapter, temporary_terms)

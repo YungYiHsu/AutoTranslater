@@ -11,6 +11,7 @@ import pytest
 
 from core.exceptions import TranslationError
 from core.models import NovelChapterEntry, NovelWork
+from core.prompt_contracts import WORK_METADATA_OUTPUT_CONTRACT
 from translators.api_work import ApiWorkTranslator
 from translators.work_base import BaseWorkTranslator
 
@@ -76,8 +77,11 @@ def test_gemini_translates_title_and_synopsis_in_one_request(tmp_path: Path) -> 
     assert result.translated_title == "中文作品名"
     assert result.translated_synopsis == "中文摘要。"
     assert len(call.calls) == 1
-    request = json.loads(call.calls[0]["contents"])
-    assert request == {"title": "作品名", "synopsis": "作品摘要。"}
+    prompt = call.calls[0]["contents"]
+    assert "作品名稱：\n作品名" in prompt
+    assert "作品摘要：\n作品摘要。" in prompt
+    assert prompt.endswith(WORK_METADATA_OUTPUT_CONTRACT)
+    assert "system_instruction" not in call.calls[0]["config"]
     assert call.calls[0]["config"]["response_mime_type"] == "application/json"
 
 

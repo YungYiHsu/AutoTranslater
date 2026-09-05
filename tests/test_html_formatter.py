@@ -30,6 +30,9 @@ def test_save_renders_standalone_dark_mode_page_and_escapes_content(tmp_path: Pa
     assert '<html lang="zh-Hant">' in content
     assert '<meta charset="utf-8">' in content
     assert 'name="txt-body-sha256"' in content
+    assert "AUTOTRANSLATER_NAV_START" in content
+    assert "沒有上一章" in content
+    assert "沒有下一章" in content
     assert "prefers-color-scheme: dark" in content
     assert "white-space: pre-wrap" in content
     assert "fake / deterministic-v1" in content
@@ -119,6 +122,24 @@ def test_html_body_is_regenerated_from_manually_edited_txt(tmp_path: Path) -> No
     html = html_path.read_text(encoding="utf-8")
     assert "人工修訂內容" in html
     assert "原始翻譯" not in html
+
+
+def test_html_regeneration_preserves_existing_navigation(tmp_path: Path) -> None:
+    chapter = make_translated_chapter(translations=("原始翻譯",))
+    txt_path = TxtFormatter().save(chapter, tmp_path)
+    html_path = HtmlFormatter(auto_open=False).save(chapter, tmp_path)
+    existing = html_path.read_text(encoding="utf-8")
+    html_path.write_text(existing.replace("沒有下一章", "第 2 章 →"), encoding="utf-8")
+    original_txt = txt_path.read_text(encoding="utf-8-sig")
+    txt_path.write_text(
+        original_txt.replace("原始翻譯", "人工修訂內容"), encoding="utf-8-sig"
+    )
+
+    HtmlFormatter(auto_open=False, overwrite=True).save(chapter, tmp_path)
+
+    regenerated = html_path.read_text(encoding="utf-8")
+    assert "人工修訂內容" in regenerated
+    assert "第 2 章 →" in regenerated
 
 
 def test_txt_and_html_difference_is_detected_before_overwrite(tmp_path: Path) -> None:

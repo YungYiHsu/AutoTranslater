@@ -89,11 +89,14 @@ def build_term_organization_service(
     *,
     config: AppConfig,
     api_key: str,
+    prompt_path: Path | None = None,
 ) -> TermOrganizationService:
     """Build the manually triggered Gemini term-memory organizer."""
     if not api_key:
         raise ValueError("api_key is required for term organization")
-    return TermOrganizationService(ApiTermOrganizer.from_config(config, api_key))
+    return TermOrganizationService(
+        ApiTermOrganizer.from_config(config, api_key, prompt_path=prompt_path)
+    )
 
 
 __all__ = [

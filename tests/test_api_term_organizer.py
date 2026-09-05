@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from core.exceptions import GeminiFreeTierQuotaError, TermMemoryError
+from core.prompt_contracts import TERM_ORGANIZATION_OUTPUT_CONTRACT
 from translators.api_term_organizer import ApiTermOrganizer
 
 
@@ -71,9 +72,9 @@ def test_api_receives_one_raw_batch_and_returns_structured_proposal(
         [
             SimpleNamespace(
                 text=(
-                    '{"groups":[{"source":"アルベルト",'
-                    '"translation":"阿爾貝特",'
-                    '"remove":["アルベルト公爵家","アルベルト家"]}]}'
+                    '{"add":[{"source":"アルベルト",'
+                    '"translation":"阿爾貝特"}],'
+                    '"remove":["アルベルト公爵家","アルベルト家"]}'
                 )
             )
         ]
@@ -82,10 +83,14 @@ def test_api_receives_one_raw_batch_and_returns_structured_proposal(
 
     result = organizer.organize(terms())
 
-    assert result[0].source == "アルベルト"
-    assert result[0].translation == "阿爾貝特"
-    assert result[0].remove == ("アルベルト公爵家", "アルベルト家")
-    assert json.loads(call.calls[0]["contents"]) == {"terms": terms()}
+    assert result.additions == (("アルベルト", "阿爾貝特"),)
+    assert result.removals == ("アルベルト公爵家", "アルベルト家")
+    prompt = call.calls[0]["contents"]
+    assert json.dumps(
+        {"terms": terms()}, ensure_ascii=False, separators=(",", ":")
+    ) in prompt
+    assert prompt.endswith(TERM_ORGANIZATION_OUTPUT_CONTRACT)
+    assert "system_instruction" not in call.calls[0]["config"]
     assert call.calls[0]["config"]["response_mime_type"] == "application/json"
 
 
@@ -128,11 +133,15 @@ def test_less_than_two_terms_do_not_call_api(
     call = RecordingCall([])
     organizer = build_organizer(tmp_path, call)
     assert organizer.batches(source) == ()
-    assert organizer.organize(source) == ()
+    assert organizer.organize(source).additions == ()
+    assert organizer.organize(source).removals == ()
     assert call.calls == []
 
 
-@pytest.mark.parametrize("response", ["not-json", "{}", '{"groups":{}}'])
+@pytest.mark.parametrize(
+    "response",
+    ["not-json", "{}", '{"groups":[]}', '{"add":{},"remove":[]}'],
+)
 def test_invalid_response_is_rejected(tmp_path: Path, response: str) -> None:
     call = RecordingCall([SimpleNamespace(text=response)])
     organizer = build_organizer(tmp_path, call)

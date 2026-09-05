@@ -8,7 +8,7 @@
 
 ## 下載 Windows 版本
 
-[下載 AutoTranslater v0.1.0 Windows ZIP](https://github.com/YungYiHsu/AutoTranslater/releases/download/v0.1.0/AutoTranslater-v0.1.0-win64.zip)
+[下載 AutoTranslater v0.2.0 Windows ZIP](https://github.com/YungYiHsu/AutoTranslater/releases/download/v0.2.0/AutoTranslater-v0.2.0-win64.zip)
 
 下載後請完整解壓縮，再執行 `AutoTranslater.exe`。ZIP 根目錄已直接包含程式檔，不會再多包一層 `AutoTranslater/`。私人儲存庫的附件需要先登入具有存取權限的 GitHub 帳號。
 
@@ -25,11 +25,13 @@
 - 每個 chunk 完成後立即寫入 checkpoint；中斷後可接續。
 - 輸出固定命名的 `0001 - 作品名稱.txt` 與 `.html`。
 - TXT 是可手動修正的正文來源；開啟 HTML 時若內容不同，會詢問是否以 TXT 覆蓋 HTML。
-- GUI 內可編輯章節翻譯與作品資料翻譯 Prompt。
+- HTML 提供上一章／下一章按鈕，只連到已有完整 TXT 與 HTML 的翻譯章節；章節不連號也能使用。
+- 選擇作品時會整理一次既有 HTML 導航；翻譯新章後只更新新章與相鄰章節，不會重掃全部檔案。
+- GUI 內可編輯章節翻譯、作品資料翻譯與專有名詞整理 Prompt；程式必要格式獨立顯示且不可修改。
 - 每部作品使用簡單的 `terms.json` 保存「日文原詞 → 繁體中文譯名」。
 - 翻譯前自動找出本章已知名詞並加入每個 chunk 的完整 Prompt。
 - 每個 chunk 翻譯後由 Gemini 分析新名詞並加入本章暫時記憶，供後續 chunk 使用；整章成功後才一次寫入 `terms.json`，衝突時保留舊譯名。
-- GUI 可手動執行「整理專有名詞」：完整詞庫依每批最多 500 組或 40,000 字元送交 Gemini，相鄰批次重疊 5 組；每批都會獨立預覽，可選擇套用、略過或停止，正常翻譯不會自動整理。
+- GUI 可手動執行「整理專有名詞」：完整詞庫依每批最多 500 組或 40,000 字元送交 Gemini，相鄰批次重疊 5 組；每批都會以「新增」與「移除」兩區預覽，可逐項勾選、略過或停止，正常翻譯不會自動整理。
 - 手動執行「重新整理完整目錄」，取得作者改稿後的最新章節目錄。
 
 目前雲端翻譯只支援 Gemini。本地模型選項保留於 GUI，但尚未實作。
@@ -88,7 +90,7 @@ uv run python gui_main.py
 
 ### 使用發布 ZIP
 
-1. 從私人 GitHub 儲存庫的 Releases 下載 `AutoTranslater-v0.1.0-win64.zip`。
+1. 從私人 GitHub 儲存庫的 Releases 下載 `AutoTranslater-v0.2.0-win64.zip`。
 2. 將 ZIP 完整解壓縮到自己的文件或工具資料夾。
 3. 保留 `AutoTranslater.exe`、`config.json` 與 `_internal/` 的相對位置。
 4. 執行 `AutoTranslater.exe`；不需要另外安裝 Python。
@@ -133,15 +135,15 @@ dist/AutoTranslater/
 在 ZIP 所在資料夾執行：
 
 ```powershell
-Get-FileHash .\AutoTranslater-v0.1.0-win64.zip -Algorithm SHA256
+Get-FileHash .\AutoTranslater-v0.2.0-win64.zip -Algorithm SHA256
 ```
 
 將輸出的 Hash 與 GitHub Release 公布的值逐字比對。SHA-256 可確認下載檔案與發布版本相同，但不能取代程式碼簽章。
 
-目前 `v0.1.0` Windows ZIP 的 SHA-256：
+目前 `v0.2.0` Windows ZIP 的 SHA-256：
 
 ```text
-57AEC48C9FC1E86AAD682E593BEDB1E53E15371D5941C31BC0221775FF5CBA72
+0459B44186512893C799DC766AF30269DF68CAA3D3E7E352147FC133C28FB497
 ```
 
 ## 使用流程
@@ -170,7 +172,8 @@ checkpoints/
 
 prompts/
 ├── translation.txt
-└── work_metadata_translation.txt
+├── work_metadata_translation.txt
+└── term_organization.txt
 ```
 
 `resources/prompts/` 保存程式預設 Prompt；`prompts/` 是使用者可修改的副本，兩者用途不同。
@@ -202,7 +205,6 @@ gui_main.py    GUI 入口
 ## 尚未完成
 
 - 本地模型翻譯
-- GitHub 第一版發布
 
 ## 授權狀態
 

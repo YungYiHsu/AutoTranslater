@@ -130,10 +130,10 @@ def test_worker_prepares_and_runs_without_touching_gui(tmp_path: Path) -> None:
         "progress",
         "progress",
         "progress",
-            "progress",
-            "progress",
-            "progress",
-            "run_done",
+        "progress",
+        "progress",
+        "progress",
+        "run_done",
     ]
     assert translator.calls == [0, 1, 2]
 
@@ -147,8 +147,10 @@ def test_worker_forwards_run_errors(tmp_path: Path) -> None:
     worker.start_prepare(controller, "url")
     plan = next_message(worker).payload
     worker.start_run(controller, plan)
-    progress = next_message(worker)
-    assert progress.kind == "progress"
+    title_progress = next_message(worker)
+    chunk_progress = next_message(worker)
+    assert title_progress.kind == "progress"
+    assert chunk_progress.kind == "progress"
     message = next_message(worker)
     assert message.kind == "error"
     assert isinstance(message.payload, RuntimeError)
@@ -189,7 +191,12 @@ def test_worker_cancel_waits_for_current_chunk_then_stops(tmp_path: Path) -> Non
     messages: list[WorkerMessage] = []
     while not messages or messages[-1].kind not in {"cancelled", "run_done", "error"}:
         messages.append(next_message(worker))
-    assert [message.kind for message in messages] == ["progress", "progress", "cancelled"]
+    assert [message.kind for message in messages] == [
+        "progress",
+        "progress",
+        "progress",
+        "cancelled",
+    ]
     assert translator.calls == [0]
 
 

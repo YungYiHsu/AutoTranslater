@@ -21,6 +21,7 @@ from core.prompt_composer import (
     format_term_pairs,
     validate_translation_template,
 )
+from core.prompt_contracts import CHAPTER_OUTPUT_CONTRACT, append_prompt_contract
 from translators.base import BaseTranslator
 from translators.gemini_errors import raise_if_free_tier_quota
 
@@ -34,6 +35,10 @@ _RETRYABLE_ERROR_NAMES = (
     "timeout",
 )
 _CODE_FENCE = re.compile(r"\A\s*```(?:\w+)?\s*\n?(.*?)\n?```\s*\Z", re.DOTALL)
+_TITLE_INSTRUCTIONS = (
+    "請將以下日文章節名稱翻譯成繁體中文。保持原意與語氣，"
+    "只輸出翻譯後的章節名稱，不要加入引號或說明。"
+)
 
 
 class _RetryableProviderError(Exception):
@@ -98,14 +103,16 @@ class ApiLlmTranslator(BaseTranslator):
 
     @property
     def checkpoint_identity(self) -> str:
-        return hashlib.sha256(self._system_prompt.encode("utf-8")).hexdigest()
+        effective = append_prompt_contract(self._system_prompt, CHAPTER_OUTPUT_CONTRACT)
+        effective = f"{effective}\n\n{_TITLE_INSTRUCTIONS}"
+        return hashlib.sha256(effective.encode("utf-8")).hexdigest()
 
     def translate(
         self,
         chunk: TextChunk,
         terms: Mapping[str, str] | None = None,
     ) -> TranslatedChunk:
-        """Translate exactly one source chunk, retrying only transient failures."""
+        """Translate one正文 chunk, retrying transient failures."""
         if not isinstance(chunk, TextChunk):
             raise TypeError("chunk must be a TextChunk")
 
@@ -124,13 +131,20 @@ class ApiLlmTranslator(BaseTranslator):
             sleep=self._sleeper,
         )
         try:
-            translated_text = retrying(self._translate_once, chunk.text, terms or {})
+            translated_text = retrying(
+                self._translate_once,
+                chunk.text,
+                terms or {},
+            )
         except _RetryableProviderError as exc:
             raise TranslationError(
                 f"{self.provider} remained unavailable after {self._retry_attempts + 1} attempt(s)."
             ) from exc
 
-        return TranslatedChunk(source_chunk=chunk, translated_text=translated_text)
+        return TranslatedChunk(
+            source_chunk=chunk,
+            translated_text=translated_text,
+        )
 
     def translate_title(
         self,
@@ -148,10 +162,7 @@ class ApiLlmTranslator(BaseTranslator):
             sleep=self._sleeper,
         )
         term_text = format_term_pairs(terms or {})
-        prompt = (
-            "請將以下日文章節名稱翻譯成繁體中文。保持原意與語氣，"
-            "只輸出翻譯後的章節名稱，不要加入引號或說明。"
-        )
+        prompt = _TITLE_INSTRUCTIONS
         if term_text:
             prompt += f"\n\n固定專有名詞譯名：\n{term_text}"
         prompt += f"\n\n日文章節名稱：{title.strip()}"
@@ -180,9 +191,17 @@ class ApiLlmTranslator(BaseTranslator):
             ) from exc
         return _normalize_response(raw_text, self.provider).strip()
 
-    def _translate_once(self, source_text: str, terms: Mapping[str, str]) -> str:
+    def _translate_once(
+        self,
+        source_text: str,
+        terms: Mapping[str, str],
+    ) -> str:
         try:
-            prompt = compose_translation_prompt(self._system_prompt, source_text, terms)
+            prompt = compose_translation_prompt(
+                self._system_prompt,
+                source_text,
+                terms,
+            )
             response = self._client.models.generate_content(
                 model=self.model,
                 contents=prompt,

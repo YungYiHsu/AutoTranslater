@@ -11,6 +11,7 @@ import pytest
 from core.config import AppConfig
 from core.exceptions import TranslationError
 from core.models import TextChunk
+from core.prompt_contracts import CHAPTER_OUTPUT_CONTRACT
 from translators.api_llm import (
     ApiLlmTranslator,
     _is_retryable_provider_error,
@@ -66,13 +67,10 @@ def test_gemini_translation_uses_external_prompt_and_preserves_source(tmp_path: 
     assert translator.model == "test-gemini"
     assert result.source_chunk is chunk
     assert result.translated_text == "　夜幕降臨。\n"
-    assert call.calls == [
-        {
-            "model": "test-gemini",
-            "contents": "系統翻譯規則\n\n夜が訪れた。",
-            "config": {"temperature": 0.2},
-        }
-    ]
+    assert call.calls[0]["model"] == "test-gemini"
+    assert call.calls[0]["contents"].startswith("系統翻譯規則\n\n夜が訪れた。")
+    assert call.calls[0]["contents"].endswith(CHAPTER_OUTPUT_CONTRACT)
+    assert call.calls[0]["config"] == {"temperature": 0.2}
 
 
 def test_from_config_copies_provider_model_and_retry_count(tmp_path: Path) -> None:
@@ -98,7 +96,10 @@ def test_translation_replaces_both_runtime_markers(tmp_path: Path) -> None:
         client=gemini_client(call),
     )
     translator.translate(TextChunk(0, "アリス出發。"), {"アリス": "愛麗絲"})
-    assert call.calls[0]["contents"] == "正文：アリス出發。\n詞彙：アリス → 愛麗絲"
+    assert call.calls[0]["contents"].startswith(
+        "正文：アリス出發。\n詞彙：アリス → 愛麗絲"
+    )
+    assert call.calls[0]["contents"].endswith(CHAPTER_OUTPUT_CONTRACT)
 
 
 def test_chapter_title_translation_uses_traditional_chinese_and_terms(tmp_path: Path) -> None:
@@ -116,6 +117,40 @@ def test_chapter_title_translation_uses_traditional_chinese_and_terms(tmp_path: 
     assert "繁體中文" in call.calls[0]["contents"]
     assert "アリス → 愛麗絲" in call.calls[0]["contents"]
     assert "日文章節名稱：アリスの旅立ち" in call.calls[0]["contents"]
+
+
+def test_chapter_title_and_body_use_separate_requests(tmp_path: Path) -> None:
+    call = SequenceCallable(
+        [
+            SimpleNamespace(text="愛麗絲的啟程"),
+            SimpleNamespace(text="愛麗絲出發了。"),
+        ]
+    )
+    translator = ApiLlmTranslator(
+        model="model",
+        api_key="secret",
+        prompt_path=prompt_file(
+            tmp_path,
+            "章節：{Chapter_Title}\n正文：{Novel_Content}\n詞彙：{Term_Memory}",
+        ),
+        client=gemini_client(call),
+    )
+
+    translated_title = translator.translate_title(
+        "アリスの旅立ち",
+        {"アリス": "愛麗絲"},
+    )
+    result = translator.translate(
+        TextChunk(0, "アリスが旅立った。"),
+        {"アリス": "愛麗絲"},
+    )
+
+    assert translated_title == "愛麗絲的啟程"
+    assert result.translated_chapter_title is None
+    assert result.translated_text == "愛麗絲出發了。"
+    assert len(call.calls) == 2
+    assert "日文章節名稱：アリスの旅立ち" in call.calls[0]["contents"]
+    assert "アリスの旅立ち" not in call.calls[1]["contents"]
 
 
 def test_transient_error_retries_then_succeeds(tmp_path: Path) -> None:

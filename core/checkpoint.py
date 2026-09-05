@@ -15,7 +15,7 @@ from typing import Any
 from core.exceptions import CheckpointError
 from core.models import NovelChapter, TextChunk, TranslatedChunk
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 
 def _sha256(value: str) -> str:
@@ -145,7 +145,7 @@ class CheckpointStore:
             raise CheckpointError("Translated chunk does not belong to this checkpoint job.")
 
         if chunk.index < len(completed):
-            if completed[chunk.index].translated_text != chunk.translated_text:
+            if completed[chunk.index] != chunk:
                 raise CheckpointError("Checkpoint already contains a different translation.")
             return self.path_for(job)
         if chunk.index != len(completed):
@@ -160,6 +160,7 @@ class CheckpointStore:
                     "index": translated.index,
                     "source_hash": translated.source_hash,
                     "translated_text": translated.translated_text,
+                    "translated_chapter_title": translated.translated_chapter_title,
                 }
                 for translated in completed
             ],
@@ -201,6 +202,7 @@ class CheckpointStore:
                 "index",
                 "source_hash",
                 "translated_text",
+                "translated_chapter_title",
             }:
                 raise CheckpointError("Checkpoint contains an invalid translation entry.")
             if expected_index >= len(job.chunks) or item["index"] != expected_index:
@@ -211,10 +213,24 @@ class CheckpointStore:
             translated_text = item["translated_text"]
             if not isinstance(translated_text, str) or not translated_text.strip():
                 raise CheckpointError("Checkpoint translated text must not be blank.")
+            translated_chapter_title = item["translated_chapter_title"]
+            if expected_index == 0:
+                if (
+                    not isinstance(translated_chapter_title, str)
+                    or not translated_chapter_title.strip()
+                ):
+                    raise CheckpointError(
+                        "Checkpoint first chunk must contain a translated chapter title."
+                    )
+            elif translated_chapter_title is not None:
+                raise CheckpointError(
+                    "Checkpoint later chunks must not contain a translated chapter title."
+                )
             completed.append(
                 TranslatedChunk(
                     source_chunk=source_chunk,
                     translated_text=translated_text,
+                    translated_chapter_title=translated_chapter_title,
                 )
             )
         return tuple(completed)

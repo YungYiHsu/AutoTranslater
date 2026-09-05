@@ -6,8 +6,18 @@ import os
 import queue
 from dataclasses import replace
 from pathlib import Path
-from tkinter import END, StringVar, Text, Tk, Toplevel, messagebox, simpledialog, ttk
-from tkinter.scrolledtext import ScrolledText
+from tkinter import (
+    END,
+    BooleanVar,
+    Canvas,
+    StringVar,
+    Text,
+    Tk,
+    Toplevel,
+    messagebox,
+    simpledialog,
+    ttk,
+)
 from typing import Literal
 
 from core.bootstrap import (
@@ -77,6 +87,7 @@ _GEMINI_MODEL_CHOICES = (
     "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
 )
+_LOCAL_MODEL_CHOICES = ("尚未提供本地模型",)
 
 
 class DesktopApp:
@@ -126,6 +137,7 @@ class DesktopApp:
         self.work_details = StringVar(value="")
         self.summary = StringVar(value="請先選擇作品，再輸入章節數字。")
         self.status = StringVar(value="就緒")
+        self.prompt_description = StringVar(value=PROMPT_TEMPLATES[0].description)
 
         self._configure_window()
         self._build_widgets()
@@ -159,12 +171,30 @@ class DesktopApp:
             outer, text="日文小說繁體中文翻譯器", font=("Microsoft JhengHei UI", 18, "bold")
         ).grid(row=0, column=0, sticky="w", pady=(0, 14))
 
-        model_frame = ttk.LabelFrame(outer, text="Gemini 模型", padding=12)
-        model_frame.grid(row=1, column=0, sticky="ew")
-        model_frame.columnconfigure(1, weight=1)
-        ttk.Label(model_frame, text="模型：").grid(row=0, column=0, sticky="w")
+        mode_frame = ttk.LabelFrame(outer, text="執行模式", padding=12)
+        mode_frame.grid(row=1, column=0, sticky="ew")
+        modes = (
+            ("API", "gemini"),
+            ("本地（待開發）", "local"),
+        )
+        self.mode_buttons: list[ttk.Radiobutton] = []
+        for column, (label, value) in enumerate(modes):
+            button = ttk.Radiobutton(
+                mode_frame,
+                text=label,
+                value=value,
+                variable=self.mode,
+                command=self._on_mode_changed,
+            )
+            button.grid(row=0, column=column, sticky="w", padx=(0, 18))
+            self.mode_buttons.append(button)
+
+        self.model_frame = ttk.LabelFrame(outer, text="API 模型", padding=12)
+        self.model_frame.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        self.model_frame.columnconfigure(1, weight=1)
+        ttk.Label(self.model_frame, text="模型：").grid(row=0, column=0, sticky="w")
         self.model_entry = ttk.Combobox(
-            model_frame,
+            self.model_frame,
             textvariable=self.model_name,
             values=self._available_model_choices(),
             state="normal",
@@ -174,13 +204,13 @@ class DesktopApp:
         self.model_entry.bind("<Return>", self._on_model_committed)
         self.model_entry.bind("<FocusOut>", self._on_model_committed)
         ttk.Label(
-            model_frame,
+            self.model_frame,
             text="可從清單選擇或輸入完整 Model ID；選擇、按 Enter 或離開欄位時自動儲存。",
             foreground="#666666",
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         url_frame = ttk.LabelFrame(outer, text="作品首頁", padding=12)
-        url_frame.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        url_frame.grid(row=3, column=0, sticky="ew", pady=(12, 0))
         url_frame.columnconfigure(0, weight=1)
         self.url_entry = ttk.Combobox(
             url_frame,
@@ -201,7 +231,7 @@ class DesktopApp:
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         work_frame = ttk.LabelFrame(outer, text="作品資訊", padding=12)
-        work_frame.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        work_frame.grid(row=4, column=0, sticky="ew", pady=(12, 0))
         ttk.Label(
             work_frame,
             textvariable=self.japanese_work,
@@ -217,7 +247,7 @@ class DesktopApp:
         )
 
         chapter_frame = ttk.LabelFrame(outer, text="章節選擇", padding=12)
-        chapter_frame.grid(row=4, column=0, sticky="ew", pady=(12, 0))
+        chapter_frame.grid(row=5, column=0, sticky="ew", pady=(12, 0))
         ttk.Label(chapter_frame, text="章節數字：").grid(row=0, column=0, sticky="w")
         self.chapter_entry = ttk.Entry(chapter_frame, textvariable=self.chapter_number, width=12)
         self.chapter_entry.grid(row=0, column=1, sticky="w", padx=(0, 8))
@@ -228,24 +258,6 @@ class DesktopApp:
         ttk.Label(chapter_frame, text="請輸入大於 0 的半形整數。", foreground="#666666").grid(
             row=0, column=3, sticky="w", padx=(12, 0)
         )
-
-        mode_frame = ttk.LabelFrame(outer, text="執行模式", padding=12)
-        mode_frame.grid(row=5, column=0, sticky="ew", pady=(12, 0))
-        modes = (
-            ("Gemini 真實翻譯", "gemini"),
-            ("本地模型（待開發）", "local"),
-        )
-        self.mode_buttons: list[ttk.Radiobutton] = []
-        for column, (label, value) in enumerate(modes):
-            button = ttk.Radiobutton(
-                mode_frame,
-                text=label,
-                value=value,
-                variable=self.mode,
-                command=self._on_mode_changed,
-            )
-            button.grid(row=0, column=column, sticky="w", padx=(0, 18))
-            self.mode_buttons.append(button)
 
         summary_frame = ttk.LabelFrame(outer, text="章節資訊", padding=(12, 12, 12, 18))
         summary_frame.grid(row=6, column=0, sticky="nsew", pady=(12, 0))
@@ -299,13 +311,13 @@ class DesktopApp:
         )
         ttk.Label(
             header,
-            text=(
-                "章節模板可使用 {Novel_Content} 與 {Term_Memory}；"
-                "缺少時會自動附加，重複時無法儲存。"
-            ),
+            textvariable=self.prompt_description,
+            wraplength=800,
+            justify="left",
         ).pack(anchor="w", pady=(6, 0))
 
         editor_tabs = ttk.Notebook(page)
+        self.prompt_tabs = editor_tabs
         editor_tabs.grid(row=1, column=0, sticky="nsew", padx=20)
         for template in PROMPT_TEMPLATES:
             frame = ttk.Frame(editor_tabs, padding=8)
@@ -323,7 +335,23 @@ class DesktopApp:
             editor.edit_reset()
             self.prompt_editors[template.key] = editor
             self._saved_prompts[template.key] = content
+            required_frame = ttk.LabelFrame(frame, text="固定格式（不可編輯）", padding=6)
+            required_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+            required_text = Text(
+                required_frame,
+                height=min(12, len(template.required_text.splitlines()) + 1),
+                wrap="word",
+                font=("Microsoft JhengHei UI", 10),
+                padx=8,
+                pady=6,
+                background="#f0f0f0",
+            )
+            required_text.pack(fill="x")
+            required_text.insert("1.0", template.required_text)
+            required_text.configure(state="disabled")
             editor_tabs.add(frame, text=template.label)
+        editor_tabs.bind("<<NotebookTabChanged>>", self._on_prompt_tab_changed)
+        self._on_prompt_tab_changed()
 
         actions = ttk.Frame(page, padding=(20, 10, 20, 16))
         actions.grid(row=2, column=0, sticky="ew")
@@ -332,6 +360,15 @@ class DesktopApp:
             side="left", padx=8
         )
         ttk.Button(actions, text="重新載入", command=self._reload_prompts).pack(side="left")
+
+    def _on_prompt_tab_changed(self, _event: object | None = None) -> None:
+        """Show instructions for the currently selected editable prompt."""
+        selected = self.prompt_tabs.select()
+        if not selected:
+            return
+        index = self.prompt_tabs.index(selected)
+        if 0 <= index < len(PROMPT_TEMPLATES):
+            self.prompt_description.set(PROMPT_TEMPLATES[index].description)
 
     def _editor_text(self, key: str) -> str:
         return self.prompt_editors[key].get("1.0", END).rstrip("\n") + "\n"
@@ -355,6 +392,7 @@ class DesktopApp:
         except (OSError, ValueError) as exc:
             messagebox.showerror("儲存失敗", str(exc), parent=self.root)
             return False
+        self._term_organization_service = None
         if self.plan is not None and self.state == "chapter_ready":
             self.plan = None
             self.controller = None
@@ -533,7 +571,7 @@ class DesktopApp:
         if selected == "local":
             messagebox.showinfo(
                 "本地模型尚未完成",
-                "本地模型翻譯功能尚待開發，請先切換至 Gemini。",
+                "本地模型翻譯功能尚待開發，請先切換至 API。",
                 parent=self.root,
             )
             return
@@ -545,18 +583,21 @@ class DesktopApp:
             if existing_count:
                 description = "完整" if existing_count == 2 else "部分"
                 if not messagebox.askyesno(
-                    "章節輸出已存在",
+                    "重新翻譯章節",
                     f"第 {chapter.number} 章已有{description}輸出。\n\n"
-                    "繼續會覆蓋現有 TXT 與 HTML，是否繼續？",
+                    "繼續會清除本章 Checkpoint、重新呼叫 API，並覆蓋現有 "
+                    "TXT 與 HTML。是否繼續？",
                     parent=self.root,
                 ):
                     return
                 overwrite_outputs = True
         if selected == "gemini":
+            pending_chunks = self.plan.total_chunks if overwrite_outputs else self.plan.pending_count
+            title_requests = 1 if overwrite_outputs or self.plan.completed_count == 0 else 0
             if not messagebox.askyesno(
-                "確認使用 Gemini",
-                f"本次正文、逐 chunk 專有名詞分析與章節名稱最多呼叫 API "
-                f"{self.plan.pending_count + self.plan.total_chunks + 1} 次。"
+                "確認使用 API",
+                f"本次章節名稱、正文與逐 chunk 專有名詞分析最多呼叫 API "
+                f"{title_requests + pending_chunks + self.plan.total_chunks} 次。"
                 "確定開始翻譯嗎？",
                 parent=self.root,
             ):
@@ -578,6 +619,13 @@ class DesktopApp:
                         self.work_result.work.translated_title if self.work_result else None
                     ),
                 )
+            except Exception as exc:  # noqa: BLE001
+                self._show_error(exc)
+                return
+        if overwrite_outputs:
+            try:
+                self.controller.clear_checkpoint(self.plan)
+                self.plan = replace(self.plan, completed_chunks=())
             except Exception as exc:  # noqa: BLE001
                 self._show_error(exc)
                 return
@@ -675,6 +723,20 @@ class DesktopApp:
             translated_chapter_title=self._read_txt_heading(local[0], "章節："),
         )
 
+    def _output_chapter_number(self, local: tuple[Path, Path]) -> int | None:
+        """Return the unpadded chapter number represented by an output pair."""
+        if self.result is not None:
+            result_paths = {path.resolve() for path in self.result.output_paths}
+            if local[1].resolve() in result_paths:
+                raw = self.result.chapter.source_chapter.source_url.rstrip("/").rsplit("/", 1)[-1]
+                if raw.isascii() and raw.isdigit():
+                    return int(raw)
+        if self.work is not None:
+            raw = self.chapter_number.get().strip()
+            if raw.isascii() and raw.isdigit():
+                return int(raw)
+        return None
+
     @staticmethod
     def _read_txt_heading(path: Path, prefix: str) -> str:
         for line in path.read_text(encoding="utf-8-sig").splitlines()[:8]:
@@ -709,7 +771,11 @@ class DesktopApp:
         if not api_key:
             return
         try:
-            service = build_term_organization_service(config=self.config, api_key=api_key)
+            service = build_term_organization_service(
+                config=self.config,
+                api_key=api_key,
+                prompt_path=self.prompt_store.path_for("term_organization"),
+            )
             batches = service.prepare_batches(self.work_result.work_directory)
             requests = len(batches)
         except Exception as exc:  # noqa: BLE001
@@ -774,45 +840,137 @@ class DesktopApp:
     def _confirm_term_organization(
         self,
         plan: TermOrganizationPlan,
-    ) -> Literal["apply", "skip", "stop"]:
-        decision: list[Literal["apply", "skip", "stop"]] = ["stop"]
+    ) -> tuple[Literal["apply", "skip", "stop"], TermOrganizationPlan | None]:
+        result: list[
+            tuple[Literal["apply", "skip", "stop"], TermOrganizationPlan | None]
+        ] = [("stop", None)]
         dialog = Toplevel(self.root)
         dialog.title(f"專有名詞整理預覽（第 {plan.batch_number}/{plan.total_batches} 批）")
-        dialog.geometry("680x520")
-        dialog.minsize(520, 360)
+        dialog.geometry("760x600")
+        dialog.minsize(600, 420)
         dialog.transient(self.root)
         dialog.grab_set()
         dialog.columnconfigure(0, weight=1)
         dialog.rowconfigure(1, weight=1)
         ttk.Label(
             dialog,
-            text="這次只處理目前批次；套用或略過後才會進入下一批。",
+            text=(
+                "勾選這一批要新增或刪除的項目；只有勾選的變更會寫入 terms.json。"
+                "套用或略過後才會進入下一批。"
+            ),
             padding=(14, 14, 14, 8),
+            wraplength=720,
         ).grid(row=0, column=0, sticky="ew")
-        preview = ScrolledText(dialog, wrap="word", font=("Microsoft JhengHei UI", 10))
-        preview.grid(row=1, column=0, sticky="nsew", padx=14)
-        preview.insert("1.0", plan.preview_text())
-        preview.configure(state="disabled")
+
+        list_frame = ttk.Frame(dialog)
+        list_frame.grid(row=1, column=0, sticky="nsew", padx=14)
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
+        canvas = Canvas(list_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        choices = ttk.Frame(canvas, padding=(8, 6))
+        choices.columnconfigure(0, weight=1)
+        window = canvas.create_window((0, 0), window=choices, anchor="nw")
+        choices.bind(
+            "<Configure>",
+            lambda _event: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda event: canvas.itemconfigure(window, width=event.width),
+        )
+
+        addition_vars: dict[str, BooleanVar] = {}
+        removal_vars: dict[str, BooleanVar] = {}
+        row = 0
+        ttk.Label(
+            choices,
+            text=f"新增項目（{len(plan.added)}）",
+            font=("Microsoft JhengHei UI", 11, "bold"),
+        ).grid(row=row, column=0, sticky="w", pady=(0, 4))
+        row += 1
+        if plan.added:
+            for source, translation in plan.added.items():
+                variable = BooleanVar(value=True)
+                addition_vars[source] = variable
+                ttk.Checkbutton(
+                    choices,
+                    text=f"{source} → {translation}",
+                    variable=variable,
+                ).grid(row=row, column=0, sticky="w", pady=2)
+                row += 1
+        else:
+            ttk.Label(choices, text="沒有新增項目。", foreground="#666666").grid(
+                row=row, column=0, sticky="w"
+            )
+            row += 1
+
+        ttk.Separator(choices).grid(row=row, column=0, sticky="ew", pady=10)
+        row += 1
+        ttk.Label(
+            choices,
+            text=f"刪除項目（{len(plan.removed)}）",
+            font=("Microsoft JhengHei UI", 11, "bold"),
+        ).grid(row=row, column=0, sticky="w", pady=(0, 4))
+        row += 1
+        if plan.removed:
+            for source, translation in plan.removed.items():
+                variable = BooleanVar(value=True)
+                removal_vars[source] = variable
+                ttk.Checkbutton(
+                    choices,
+                    text=f"{source} → {translation}",
+                    variable=variable,
+                ).grid(row=row, column=0, sticky="w", pady=2)
+                row += 1
+        else:
+            ttk.Label(choices, text="沒有刪除項目。", foreground="#666666").grid(
+                row=row, column=0, sticky="w"
+            )
+
         actions = ttk.Frame(dialog, padding=14)
-        actions.grid(row=2, column=0, sticky="e")
+        actions.grid(row=2, column=0, sticky="ew")
+
+        def set_all(selected: bool) -> None:
+            for variable in (*addition_vars.values(), *removal_vars.values()):
+                variable.set(selected)
 
         def accept() -> None:
-            decision[0] = "apply"
+            additions = {source for source, variable in addition_vars.items() if variable.get()}
+            removals = {source for source, variable in removal_vars.items() if variable.get()}
+            if not additions and not removals:
+                messagebox.showwarning(
+                    "尚未勾選變更",
+                    "請至少勾選一個新增或刪除項目，或選擇「略過此批」。",
+                    parent=dialog,
+                )
+                return
+            result[0] = (
+                "apply",
+                plan.select_changes(additions=additions, removals=removals),
+            )
             dialog.destroy()
 
         def skip() -> None:
-            decision[0] = "skip"
+            result[0] = ("skip", None)
             dialog.destroy()
 
-        ttk.Button(actions, text="套用並繼續", command=accept).pack(side="left")
-        ttk.Button(actions, text="略過此批", command=skip).pack(side="left", padx=(8, 0))
-        ttk.Button(actions, text="停止整理", command=dialog.destroy).pack(
-            side="left",
+        ttk.Button(actions, text="全選", command=lambda: set_all(True)).pack(side="left")
+        ttk.Button(actions, text="全部取消", command=lambda: set_all(False)).pack(
+            side="left", padx=(8, 0)
+        )
+        ttk.Button(actions, text="停止整理", command=dialog.destroy).pack(side="right")
+        ttk.Button(actions, text="略過此批", command=skip).pack(
+            side="right",
             padx=(8, 0),
         )
+        ttk.Button(actions, text="套用勾選項目並繼續", command=accept).pack(side="right")
         dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
         dialog.wait_window()
-        return decision[0]
+        return result[0]
 
     def _initial_work_service(self) -> WorkSetupService:
         selected = self.mode.get()
@@ -884,7 +1042,7 @@ class DesktopApp:
                 self._apply_state("idle", "本地模型模式找不到既有作品記憶。")
                 messagebox.showwarning(
                     "本地模型尚未完成",
-                    "此作品尚無翻譯記憶，而本地模型功能仍待開發。請切換至 Gemini。",
+                    "此作品尚無翻譯記憶，而本地模型功能仍待開發。請切換至 API。",
                     parent=self.root,
                 )
                 return
@@ -948,7 +1106,9 @@ class DesktopApp:
             return
         if message.kind == "progress":
             update: ProgressUpdate = message.payload
-            if update.source == "translating":
+            if update.source == "translating_title":
+                self.status.set("正在翻譯章節名稱……")
+            elif update.source == "translating":
                 self.status.set(f"翻譯第{update.completed}/{update.total}個chunk中")
             elif update.source == "checkpoint":
                 self.status.set(f"已載入第{update.completed}/{update.total}個chunk的Checkpoint")
@@ -958,13 +1118,28 @@ class DesktopApp:
                 )
             elif update.source == "updating_terms":
                 self.status.set("正在驗證並更新專有名詞……")
-            elif update.source == "translating_title":
-                self.status.set("正在翻譯章節名稱……")
             else:
                 self.status.set(f"第{update.completed}/{update.total}個chunk已翻譯並存檔")
             return
         if message.kind == "run_done":
             self.result = message.payload
+            completed_number = self._output_chapter_number(
+                (
+                    next(
+                        path
+                        for path in self.result.output_paths
+                        if path.suffix.lower() == ".txt"
+                    ),
+                    next(
+                        path
+                        for path in self.result.output_paths
+                        if path.suffix.lower() == ".html"
+                    ),
+                )
+            )
+            completed_label = (
+                f"第 {completed_number} 章" if completed_number is not None else "本章"
+            )
             if self.chapter_progress is not None:
                 self.chapter_number.set(str(self.chapter_progress.next_number))
             self.plan = None
@@ -976,14 +1151,14 @@ class DesktopApp:
                 else ""
             )
             self.summary.set(
-                "翻譯與輸出完成。"
+                f"{completed_label}翻譯與輸出完成。"
                 + (f"{term_summary}\n" if term_summary else "")
                 + "請分析下一個章節。"
             )
             status = (
-                "所有章節皆已完成翻譯。"
+                f"{completed_label}翻譯完成；所有章節皆已完成翻譯。"
                 if self.chapter_progress is not None and self.chapter_progress.all_completed
-                else "翻譯完成，已填入下一個未完成章節。"
+                else f"{completed_label}翻譯完成，已填入下一個未完成章節。"
             )
             self._apply_state("work_ready", status)
             if self.result.term_memory_error:
@@ -1014,7 +1189,7 @@ class DesktopApp:
                 )
                 self.root.after(10, self._start_next_term_organization_batch)
                 return
-            decision = self._confirm_term_organization(plan)
+            decision, selected_plan = self._confirm_term_organization(plan)
             if decision == "stop":
                 self._finish_term_organization(stopped=True)
                 return
@@ -1029,13 +1204,16 @@ class DesktopApp:
             if self.work_result is None or self._term_organization_service is None:
                 self._show_error(ValueError("缺少作品或整理服務，無法套用整理結果。"))
                 return
+            if selected_plan is None:
+                self._show_error(ValueError("缺少已勾選的整理結果，無法套用。"))
+                return
             self.status.set(
                 f"正在套用第 {plan.batch_number}/{plan.total_batches} 批整理結果……"
             )
             self.worker.start_apply_term_organization(
                 self._term_organization_service,
                 self.work_result.work_directory,
-                plan,
+                selected_plan,
             )
             return
         if message.kind == "term_organization_applied":
@@ -1067,7 +1245,7 @@ class DesktopApp:
 
     def _service_for_resume(self) -> WorkSetupService | None:
         if self.mode.get() == "local":
-            messagebox.showwarning("本地模型尚未完成", "請先切換至 Gemini。", parent=self.root)
+            messagebox.showwarning("本地模型尚未完成", "請先切換至 API。", parent=self.root)
             return None
         return self._gemini_work_service()
 
@@ -1134,7 +1312,7 @@ class DesktopApp:
             "organizing_terms",
         }
         work_ready = state in {"work_ready", "chapter_ready"}
-        self.model_entry.configure(state="disabled" if busy else "normal")
+        self._sync_model_selector(busy=busy)
         self.url_entry.configure(state="disabled" if busy else "normal")
         self.select_work_button.configure(state="disabled" if busy else "normal")
         can_refresh_catalog = not busy and self.work_result is not None
@@ -1144,7 +1322,14 @@ class DesktopApp:
         can_start = state == "chapter_ready" and self.mode.get() == "gemini"
         self.start_button.configure(state="normal" if can_start else "disabled")
         self.cancel_button.configure(state="normal" if busy else "disabled")
-        can_open_html = not busy and self._local_output_paths() is not None
+        local_outputs = self._local_output_paths()
+        can_open_html = not busy and local_outputs is not None
+        open_number = (
+            self._output_chapter_number(local_outputs) if local_outputs is not None else None
+        )
+        self.open_html_button.configure(
+            text=f"開啟第 {open_number} 章 HTML" if open_number is not None else "開啟 HTML"
+        )
         self.open_html_button.configure(state="normal" if can_open_html else "disabled")
         can_open_terms = not busy and self.work_result is not None
         self.open_terms_button.configure(state="normal" if can_open_terms else "disabled")
@@ -1176,6 +1361,8 @@ class DesktopApp:
         return tuple(dict.fromkeys(choice for choice in choices if choice))
 
     def _commit_model_selection(self) -> bool:
+        if self.mode.get() == "local":
+            return True
         selected = self.model_name.get().strip()
         if not selected:
             self.model_name.set(self.config.model)
@@ -1248,18 +1435,40 @@ class DesktopApp:
 
     def _on_mode_changed(self) -> None:
         selected = self.mode.get()
+        self.model_name.set(
+            _LOCAL_MODEL_CHOICES[0] if selected == "local" else self.config.model
+        )
         if self.plan is not None:
             self._analyzed_mode = selected
         if selected == "local":
             status = "已切換至本地模型；翻譯功能尚待開發。"
         else:
-            status = "已切換至 Gemini。"
+            status = "已切換至 API。"
         self._apply_state(self.state, status)
+
+    def _sync_model_selector(self, *, busy: bool) -> None:
+        """Show model choices belonging to the active execution mode."""
+        if self.mode.get() == "local":
+            self.model_frame.configure(text="本地模型")
+            self.model_entry.configure(
+                values=_LOCAL_MODEL_CHOICES,
+                state="disabled" if busy else "readonly",
+            )
+            if self.model_name.get() not in _LOCAL_MODEL_CHOICES:
+                self.model_name.set(_LOCAL_MODEL_CHOICES[0])
+            return
+        self.model_frame.configure(text="API 模型")
+        self.model_entry.configure(
+            values=self._available_model_choices(),
+            state="disabled" if busy else "normal",
+        )
+        if self.model_name.get() in _LOCAL_MODEL_CHOICES:
+            self.model_name.set(self.config.model)
 
     def _selected_model_label(self) -> str:
         if self.mode.get() == "local":
             return "本地模型（待開發）"
-        return f"{self.config.provider} / {self.config.model}"
+        return f"API / {self.config.model}"
 
     def _clear_work_data(self, *, keep_url: bool) -> None:
         self.work = None

@@ -15,6 +15,8 @@ from core.config import AppConfig
 from core.exceptions import TranslationError
 from core.models import NovelWork, TranslatedNovelWork
 from core.paths import get_resource_path
+from core.prompt_composer import compose_work_metadata_prompt, validate_work_metadata_template
+from core.prompt_contracts import WORK_METADATA_OUTPUT_CONTRACT, append_prompt_contract
 from translators.gemini_errors import raise_if_free_tier_quota
 from translators.work_base import BaseWorkTranslator
 
@@ -61,7 +63,8 @@ class ApiWorkTranslator(BaseWorkTranslator):
         self._api_key = api_key.strip()
         self._retry_attempts = retry_attempts
         path = prompt_path or get_resource_path("resources/prompts/work_metadata_translation.txt")
-        self._system_prompt = self._load_prompt(path)
+        self._prompt = self._load_prompt(path)
+        validate_work_metadata_template(self._prompt)
         self._client = client or self._create_client()
         self._sleeper = sleeper
 
@@ -84,12 +87,13 @@ class ApiWorkTranslator(BaseWorkTranslator):
 
     @property
     def prompt_identity(self) -> str:
-        return hashlib.sha256(self._system_prompt.encode("utf-8")).hexdigest()
+        effective = append_prompt_contract(self._prompt, WORK_METADATA_OUTPUT_CONTRACT)
+        return hashlib.sha256(effective.encode("utf-8")).hexdigest()
 
     def translate(self, work: NovelWork) -> TranslatedNovelWork:
         if not isinstance(work, NovelWork):
             raise TypeError("work must be a NovelWork")
-        source = json.dumps({"title": work.title, "synopsis": work.synopsis}, ensure_ascii=False)
+        prompt = compose_work_metadata_prompt(self._prompt, work.title, work.synopsis)
         retrying = Retrying(
             stop=stop_after_attempt(self._retry_attempts + 1),
             wait=wait_exponential(multiplier=0.5, min=0.5, max=8),
@@ -98,7 +102,7 @@ class ApiWorkTranslator(BaseWorkTranslator):
             sleep=self._sleeper,
         )
         try:
-            raw_text = retrying(self._translate_once, source)
+            raw_text = retrying(self._translate_once, prompt)
         except _RetryableProviderError as exc:
             raise TranslationError(
                 f"{self.provider} remained unavailable after {self._retry_attempts + 1} attempt(s)."
@@ -113,13 +117,12 @@ class ApiWorkTranslator(BaseWorkTranslator):
             prompt_identity=self.prompt_identity,
         )
 
-    def _translate_once(self, source: str) -> Any:
+    def _translate_once(self, prompt: str) -> Any:
         try:
             response = self._client.models.generate_content(
                 model=self.model,
-                contents=source,
+                contents=prompt,
                 config={
-                    "system_instruction": self._system_prompt,
                     "temperature": 0.2,
                     "response_mime_type": "application/json",
                 },

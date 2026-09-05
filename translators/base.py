@@ -32,7 +32,7 @@ class BaseTranslator(ABC):
         chunk: TextChunk,
         terms: Mapping[str, str] | None = None,
     ) -> TranslatedChunk:
-        """Translate exactly one source chunk."""
+        """Translate one source-text chunk."""
 
     @abstractmethod
     def translate_title(

@@ -20,6 +20,7 @@ from core.models import (
 )
 from core.work_memory import text_hash
 from core.work_setup import WorkSetupResult, WorkSetupService
+from formatters.html_navigation import HtmlNavigationManager
 from tests.fake_work import FakeWorkTranslator
 
 
@@ -163,3 +164,35 @@ def test_missing_recorded_output_is_not_treated_as_complete(tmp_path: Path) -> N
     assert 1 not in progress.completed_numbers
     assert 1 in progress.partial_numbers
     assert progress.next_number == 1
+
+
+class RecordingNavigationManager(HtmlNavigationManager):
+    def __init__(self) -> None:
+        super().__init__()
+        self.full_refreshes: list[set[int]] = []
+        self.neighbor_refreshes: list[tuple[set[int], int]] = []
+
+    def refresh_all(self, chapters: dict[int, Path]) -> int:
+        self.full_refreshes.append(set(chapters))
+        return 0
+
+    def refresh_neighbors(self, chapters: dict[int, Path], chapter_number: int) -> int:
+        self.neighbor_refreshes.append((set(chapters), chapter_number))
+        return 0
+
+
+def test_record_completed_uses_selected_work_index_without_full_rescan(tmp_path: Path) -> None:
+    setup = make_setup(tmp_path)
+    touch_outputs(setup, 1, txt=True, html=True)
+    touch_outputs(setup, 5, txt=True, html=True)
+    navigation = RecordingNavigationManager()
+    tracker = ChapterCompletionTracker(navigation_manager=navigation)
+    tracker.reconcile(setup)
+    touch_outputs(setup, 3, txt=True, html=True)
+
+    progress = tracker.record_completed(setup, make_result(setup, 3))
+
+    assert navigation.full_refreshes == [{1, 5}]
+    assert navigation.neighbor_refreshes == [({1, 3, 5}, 3)]
+    assert progress.completed_numbers == {1, 3, 5}
+    assert progress.all_completed

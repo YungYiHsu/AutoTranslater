@@ -15,6 +15,7 @@ from core.exceptions import FormatterError
 from core.models import TranslatedChapter
 from core.paths import get_resource_path
 from formatters.base import BaseFormatter
+from formatters.html_navigation import preserve_navigation_block
 from formatters.utils import (
     atomic_write_text,
     build_output_stem,
@@ -61,6 +62,9 @@ class HtmlFormatter(BaseFormatter):
             destination = destination_path or output_path / f"{stem}.html"
             if destination.exists() and not self._overwrite:
                 raise FormatterError("HTML output already exists; overwrite was not confirmed.")
+            if destination.exists():
+                existing_html = destination.read_text(encoding="utf-8-sig")
+                html = preserve_navigation_block(existing_html, html)
             atomic_write_text(destination, html, encoding="utf-8")
         except FormatterError:
             raise

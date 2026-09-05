@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -17,11 +17,10 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class TermOrganizationProposal:
-    """One model-proposed canonical mapping and exact keys to remove."""
+    """One model response containing independent additions and removals."""
 
-    source: str
-    translation: str
-    remove: tuple[str, ...]
+    additions: tuple[tuple[str, str], ...]
+    removals: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,8 +81,40 @@ class TermOrganizationPlan:
                 f"{source} → {translation}" for source, translation in self.removed.items()
             )
         if self.rejected_proposals:
-            lines.extend(("", f"已忽略不安全或衝突的建議：{self.rejected_proposals} 組"))
+            lines.extend(("", f"已忽略不安全或衝突的建議：{self.rejected_proposals} 筆"))
         return "\n".join(lines)
+
+    def select_changes(
+        self,
+        *,
+        additions: Collection[str],
+        removals: Collection[str],
+    ) -> TermOrganizationPlan:
+        """Return a plan containing only user-selected additions and removals."""
+        selected_additions = set(additions)
+        selected_removals = set(removals)
+        available_additions = self.added
+        available_removals = self.removed
+        if not selected_additions <= available_additions.keys():
+            raise ValueError("selected additions must come from this organization plan")
+        if not selected_removals <= available_removals.keys():
+            raise ValueError("selected removals must come from this organization plan")
+
+        organized = dict(self.original_terms)
+        for source in selected_additions:
+            organized[source] = available_additions[source]
+        for source in selected_removals:
+            organized.pop(source, None)
+        return TermOrganizationPlan(
+            expected_hash=self.expected_hash,
+            original_terms=dict(self.original_terms),
+            organized_terms=dict(sorted(organized.items())),
+            proposals=self.proposals,
+            rejected_proposals=self.rejected_proposals,
+            api_requests=self.api_requests,
+            batch_number=self.batch_number,
+            total_batches=self.total_batches,
+        )
 
 
 ProgressCallback = Callable[[str], None]
@@ -155,25 +186,20 @@ class TermOrganizationService:
             )
 
         self._emit(progress, "requesting")
-        suggestions = self._organizer.organize(current_batch)
+        suggestion = self._organizer.organize(current_batch)
         self._emit(progress, "validating")
         organized = dict(original)
-        accepted: list[TermOrganizationProposal] = []
-        consolidated, rejected = self._consolidate(suggestions)
-        for suggestion in consolidated:
-            if not self._is_safe(suggestion, original, current_batch):
-                rejected += 1
-                continue
-            organized[suggestion.source] = suggestion.translation
-            for source in suggestion.remove:
-                if source != suggestion.source:
-                    organized.pop(source, None)
-            accepted.append(suggestion)
+        accepted, rejected = self._validate(suggestion, original, current_batch)
+        for source, translation in accepted.additions:
+            organized[source] = translation
+        for source in accepted.removals:
+            organized.pop(source, None)
+        proposals = (accepted,) if accepted.additions or accepted.removals else ()
         return TermOrganizationPlan(
             expected_hash,
             original,
             dict(sorted(organized.items())),
-            tuple(accepted),
+            proposals,
             rejected,
             1,
             batch.number,
@@ -190,33 +216,56 @@ class TermOrganizationService:
         )
 
     @staticmethod
-    def _is_safe(
+    def _validate(
         proposal: TermOrganizationProposal,
         original: dict[str, str],
         batch_terms: dict[str, str],
-    ) -> bool:
-        if (
-            not TermOrganizationService._valid_text(proposal.source)
-            or not TermOrganizationService._valid_text(proposal.translation)
-            or not proposal.remove
-            or len(set(proposal.remove)) != len(proposal.remove)
-        ):
-            return False
-        existing = original.get(proposal.source)
-        if existing is not None and existing != proposal.translation:
-            return False
-        represented: set[str] = set()
-        if existing == proposal.translation:
-            represented.add(proposal.source)
-        for source in proposal.remove:
+    ) -> tuple[TermOrganizationProposal, int]:
+        """Keep safe independent changes and preserve old values on conflicts."""
+        rejected = 0
+        translations_by_source: dict[str, set[str]] = {}
+        for source, translation in proposal.additions:
+            translations_by_source.setdefault(source, set()).add(translation)
+
+        requested_removals = set(proposal.removals)
+        additions: dict[str, str] = {}
+        for source, translations in translations_by_source.items():
             if (
-                source not in original
+                len(translations) != 1
+                or source in requested_removals
+                or not TermOrganizationService._valid_text(source)
+            ):
+                rejected += 1
+                continue
+            translation = next(iter(translations))
+            existing = original.get(source)
+            if (
+                not TermOrganizationService._valid_text(translation)
+                or (existing is not None and existing != translation)
+            ):
+                rejected += 1
+                continue
+            if existing is None:
+                additions[source] = translation
+
+        removals: set[str] = set()
+        for source in requested_removals:
+            if (
+                source in translations_by_source
+                or source not in original
                 or source not in batch_terms
                 or not TermOrganizationService._valid_text(source)
             ):
-                return False
-            represented.add(source)
-        return len(represented) >= 2
+                rejected += 1
+                continue
+            removals.add(source)
+        return (
+            TermOrganizationProposal(
+                tuple(sorted(additions.items())),
+                tuple(sorted(removals)),
+            ),
+            rejected,
+        )
 
     @staticmethod
     def _valid_text(value: str) -> bool:
@@ -228,51 +277,6 @@ class TermOrganizationService:
             and "\r" not in stripped
             and any(unicodedata.category(char).startswith("L") for char in stripped)
         )
-
-    @staticmethod
-    def _consolidate(
-        suggestions: tuple[TermOrganizationProposal, ...],
-    ) -> tuple[tuple[TermOrganizationProposal, ...], int]:
-        """Deduplicate one response and discard internally conflicting advice."""
-        unique = tuple(dict.fromkeys(suggestions))
-        by_source: dict[str, list[TermOrganizationProposal]] = {}
-        for proposal in unique:
-            by_source.setdefault(proposal.source, []).append(proposal)
-
-        conflicting: set[TermOrganizationProposal] = set()
-        for proposals in by_source.values():
-            if len({proposal.translation for proposal in proposals}) > 1:
-                conflicting.update(proposals)
-
-        removal_owners: dict[str, set[tuple[str, str]]] = {}
-        for proposal in unique:
-            owner = (proposal.source, proposal.translation)
-            for source in proposal.remove:
-                removal_owners.setdefault(source, set()).add(owner)
-        conflicting_removals = {
-            source for source, owners in removal_owners.items() if len(owners) > 1
-        }
-        canonical_sources = {proposal.source for proposal in unique}
-        for proposal in unique:
-            if any(source in conflicting_removals for source in proposal.remove):
-                conflicting.add(proposal)
-            if any(
-                source != proposal.source and source in canonical_sources
-                for source in proposal.remove
-            ):
-                conflicting.add(proposal)
-
-        merged: list[TermOrganizationProposal] = []
-        for source, proposals in by_source.items():
-            valid = [proposal for proposal in proposals if proposal not in conflicting]
-            if not valid:
-                continue
-            translation = valid[0].translation
-            removals = tuple(
-                sorted({item for proposal in valid for item in proposal.remove})
-            )
-            merged.append(TermOrganizationProposal(source, translation, removals))
-        return tuple(sorted(merged, key=lambda item: item.source)), len(conflicting)
 
     @staticmethod
     def _emit(progress: ProgressCallback | None, stage: str) -> None:

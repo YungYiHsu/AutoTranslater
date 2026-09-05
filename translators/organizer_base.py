@@ -17,7 +17,7 @@ class BaseTermOrganizer(ABC):
     def organize(
         self,
         terms: Mapping[str, str],
-    ) -> tuple[TermOrganizationProposal, ...]:
+    ) -> TermOrganizationProposal:
         """Analyze exactly one batch and return proposed changes."""
 
 

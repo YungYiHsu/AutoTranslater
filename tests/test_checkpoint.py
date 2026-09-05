@@ -41,6 +41,7 @@ def translated(job: CheckpointJob, index: int, text: str | None = None) -> Trans
     return TranslatedChunk(
         source_chunk=job.chunks[index],
         translated_text=text or f"翻譯 {index}",
+        translated_chapter_title="中文第一章" if index == 0 else None,
     )
 
 
@@ -96,7 +97,7 @@ def test_save_and_load_consecutive_translation_prefix(tmp_path: Path) -> None:
     assert loaded[0].source_chunk is job.chunks[0]
     assert loaded[1].translated_text == "　第二段。\n"
     state = read_state(store, job)
-    assert state["schema_version"] == 1
+    assert state["schema_version"] == 2
     assert state["job"] == job.metadata()
     assert state["updated_at"].endswith("+00:00")
     assert "api_key" not in json.dumps(state).lower()
@@ -185,7 +186,12 @@ def test_clear_is_explicit_and_idempotent(tmp_path: Path) -> None:
         (
             lambda state: {
                 **state,
-                "translations": [{"index": 0, "source_hash": "wrong", "translated_text": "譯文"}],
+                "translations": [{
+                    "index": 0,
+                    "source_hash": "wrong",
+                    "translated_text": "譯文",
+                    "translated_chapter_title": "中文第一章",
+                }],
             },
             "hash",
         ),
@@ -193,10 +199,11 @@ def test_clear_is_explicit_and_idempotent(tmp_path: Path) -> None:
             lambda state: {
                 **state,
                 "translations": [
-                    {
-                        "index": 1,
-                        "source_hash": state["job"]["chunks"][0]["source_hash"],
-                        "translated_text": "譯文",
+                        {
+                            "index": 1,
+                            "source_hash": state["job"]["chunks"][0]["source_hash"],
+                            "translated_text": "譯文",
+                            "translated_chapter_title": None,
                     }
                 ],
             },
@@ -206,10 +213,11 @@ def test_clear_is_explicit_and_idempotent(tmp_path: Path) -> None:
             lambda state: {
                 **state,
                 "translations": [
-                    {
-                        "index": 0,
-                        "source_hash": state["job"]["chunks"][0]["source_hash"],
-                        "translated_text": " ",
+                        {
+                            "index": 0,
+                            "source_hash": state["job"]["chunks"][0]["source_hash"],
+                            "translated_text": " ",
+                            "translated_chapter_title": "中文第一章",
                     }
                 ],
             },
