@@ -1,0 +1,6 @@
+{
+  "model": "gemini-3.5-flash",
+  "output_directory": "outputs",
+  "chunk_size": 4000,
+  "retry_attempts": 3
+}

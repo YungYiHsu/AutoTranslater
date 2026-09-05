@@ -1,0 +1,39 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+/release/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+
+# Project-local uv runtime/cache
+.uv-cache/
+.uv-python/
+
+# Secrets and local configuration
+.env
+
+# User-editable prompt copies (bundled defaults remain in resources/prompts/)
+/prompts/
+
+# Tool caches
+.pytest_cache/
+.codex-test-tmp/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Runtime data (keep directory placeholders)
+outputs/*
+!outputs/.gitkeep
+checkpoints/*
+!checkpoints/.gitkeep
+
+# Logs
+logs/
+*.log
