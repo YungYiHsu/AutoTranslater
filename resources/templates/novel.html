@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="txt-body-sha256" content="{{ txt_body_hash }}">
+  {% if is_draft %}<meta name="translation-status" content="draft">{% endif %}
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
   <title>{{ chapter.translated_work_title }}－{{ chapter.translated_chapter_title }}</title>
   <style>

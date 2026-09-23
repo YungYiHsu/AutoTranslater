@@ -1,6 +1,6 @@
 [project]
 name = "autotranslater"
-version = "0.2.0"
+version = "0.3.0"
 description = "日文網路小說繁體中文翻譯器"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "requests>=2.34.2",
     "tenacity>=9.1.4",
+    "tzdata>=2025.2",
 ]
 
 [dependency-groups]

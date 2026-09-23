@@ -11,12 +11,15 @@ from typing import Any
 
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from core.api_usage import DailyApiUsage
 from core.config import AppConfig
 from core.exceptions import TranslationError
+from core.gemini_settings import request_config
 from core.models import NovelWork, TranslatedNovelWork
 from core.paths import get_resource_path
 from core.prompt_composer import compose_work_metadata_prompt, validate_work_metadata_template
 from core.prompt_contracts import WORK_METADATA_OUTPUT_CONTRACT, append_prompt_contract
+from translators.api_errors import invalid_response, request_error, response_text
 from translators.gemini_errors import raise_if_free_tier_quota
 from translators.work_base import BaseWorkTranslator
 
@@ -44,9 +47,10 @@ class ApiWorkTranslator(BaseWorkTranslator):
         *,
         model: str,
         api_key: str,
-        retry_attempts: int = 3,
+        retry_attempts: int = 0,
         prompt_path: Path | None = None,
         client: Any | None = None,
+        usage: DailyApiUsage | None = None,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         if not isinstance(model, str) or not model.strip():
@@ -66,6 +70,7 @@ class ApiWorkTranslator(BaseWorkTranslator):
         self._prompt = self._load_prompt(path)
         validate_work_metadata_template(self._prompt)
         self._client = client or self._create_client()
+        self._usage = usage
         self._sleeper = sleeper
 
     @classmethod
@@ -104,9 +109,7 @@ class ApiWorkTranslator(BaseWorkTranslator):
         try:
             raw_text = retrying(self._translate_once, prompt)
         except _RetryableProviderError as exc:
-            raise TranslationError(
-                f"{self.provider} remained unavailable after {self._retry_attempts + 1} attempt(s)."
-            ) from exc
+            raise request_error(exc) from exc
         title, synopsis = self._parse_response(raw_text)
         return TranslatedNovelWork(
             source_work=work,
@@ -119,39 +122,39 @@ class ApiWorkTranslator(BaseWorkTranslator):
 
     def _translate_once(self, prompt: str) -> Any:
         try:
+            if self._usage is not None:
+                self._usage.record(self._model)
             response = self._client.models.generate_content(
                 model=self.model,
                 contents=prompt,
-                config={
+                config=request_config({
                     "temperature": 0.2,
                     "response_mime_type": "application/json",
-                },
+                }),
             )
-            return response.text
         except Exception as exc:
             raise_if_free_tier_quota(exc)
             if _is_retryable_provider_error(exc):
                 raise _RetryableProviderError(type(exc).__name__) from exc
-            raise TranslationError(
-                f"{self.provider} rejected the work metadata request ({type(exc).__name__})."
-            ) from exc
+            raise request_error(exc) from exc
+        return response_text(response)
 
     @staticmethod
     def _parse_response(value: Any) -> tuple[str, str]:
         if not isinstance(value, str) or not value.strip():
-            raise TranslationError("翻譯 API 回傳了空白的作品資料。")
+            raise invalid_response("LLM 回傳內容無效", value)
         try:
             payload = json.loads(value)
         except json.JSONDecodeError as exc:
-            raise TranslationError("翻譯 API 回傳的作品資料不是有效 JSON。") from exc
+            raise invalid_response("LLM 回傳格式錯誤", value) from exc
         if not isinstance(payload, dict) or set(payload) != _EXPECTED_KEYS:
-            raise TranslationError("翻譯 API 回傳的作品資料欄位不正確。")
+            raise invalid_response("LLM 回傳格式錯誤", value)
         title = payload["traditional_chinese_title"]
         synopsis = payload["traditional_chinese_synopsis"]
         if not isinstance(title, str) or not title.strip():
-            raise TranslationError("翻譯 API 回傳的中文作品名稱為空白。")
+            raise invalid_response("LLM 回傳內容無效", value)
         if not isinstance(synopsis, str) or not synopsis.strip():
-            raise TranslationError("翻譯 API 回傳的中文摘要為空白。")
+            raise invalid_response("LLM 回傳內容無效", value)
         return title.strip(), synopsis.strip()
 
     def _create_client(self) -> Any:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -11,11 +12,14 @@ from typing import Any
 
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from core.api_usage import DailyApiUsage
 from core.config import AppConfig
 from core.exceptions import TermMemoryError
+from core.gemini_settings import request_config
 from core.models import TranslatedChapter
 from core.paths import get_resource_path
 from core.prompt_composer import format_term_pairs
+from translators.api_errors import invalid_response, request_error, response_text
 from translators.gemini_errors import raise_if_free_tier_quota
 from translators.term_base import BaseTermAnalyzer
 
@@ -43,9 +47,10 @@ class ApiTermAnalyzer(BaseTermAnalyzer):
         *,
         model: str,
         api_key: str,
-        retry_attempts: int = 3,
+        retry_attempts: int = 0,
         prompt_path: Path | None = None,
         client: Any | None = None,
+        usage: DailyApiUsage | None = None,
         sleeper: Callable[[float], None] = time.sleep,
         max_batch_chars: int = 60_000,
     ) -> None:
@@ -68,6 +73,7 @@ class ApiTermAnalyzer(BaseTermAnalyzer):
         if not self._prompt:
             raise TermMemoryError("專有名詞分析 Prompt 不可為空白。")
         self._client = client or self._create_client()
+        self._usage = usage
         self._sleeper = sleeper
         self._max_batch_chars = max_batch_chars
 
@@ -79,6 +85,11 @@ class ApiTermAnalyzer(BaseTermAnalyzer):
             retry_attempts=config.retry_attempts,
             **kwargs,
         )
+
+    @property
+    def checkpoint_identity(self) -> str:
+        """Bind completion markers to the exact automatic-analysis Prompt."""
+        return hashlib.sha256(self._prompt.encode("utf-8")).hexdigest()
 
     def analyze(
         self,
@@ -113,28 +124,28 @@ class ApiTermAnalyzer(BaseTermAnalyzer):
         try:
             raw = retrying(self._request_once, content)
         except _RetryableTermAnalysisError as exc:
-            raise TermMemoryError("Gemini 專有名詞分析重試後仍無法完成。") from exc
+            raise request_error(exc) from exc
         return self._parse_response(raw)
 
     def _request_once(self, content: str) -> Any:
         try:
+            if self._usage is not None:
+                self._usage.record(self._model)
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=content,
-                config={
+                config=request_config({
                     "system_instruction": self._prompt,
                     "temperature": 0.1,
                     "response_mime_type": "application/json",
-                },
+                }),
             )
-            return response.text
         except Exception as exc:
             raise_if_free_tier_quota(exc)
             if self._is_retryable(exc):
                 raise _RetryableTermAnalysisError(type(exc).__name__) from exc
-            raise TermMemoryError(
-                f"Gemini 拒絕專有名詞分析請求（{type(exc).__name__}）。"
-            ) from exc
+            raise request_error(exc) from exc
+        return response_text(response)
 
     def _build_batches(
         self,
@@ -167,20 +178,20 @@ class ApiTermAnalyzer(BaseTermAnalyzer):
     @staticmethod
     def _parse_response(value: Any) -> dict[str, str]:
         if not isinstance(value, str) or not value.strip():
-            raise TermMemoryError("Gemini 回傳了空白的專有名詞分析結果。")
+            raise invalid_response("LLM 回傳內容無效", value)
         fenced = _CODE_FENCE.fullmatch(value)
         if fenced:
             value = fenced.group(1)
         try:
             payload = json.loads(value)
         except json.JSONDecodeError as exc:
-            raise TermMemoryError("Gemini 回傳的專有名詞不是有效 JSON。") from exc
+            raise invalid_response("LLM 回傳格式錯誤", value) from exc
         if not isinstance(payload, dict):
-            raise TermMemoryError("Gemini 專有名詞結果必須是 JSON object。")
+            raise invalid_response("LLM 回傳格式錯誤", value)
         result: dict[str, str] = {}
         for source, translation in payload.items():
             if not isinstance(source, str) or not isinstance(translation, str):
-                raise TermMemoryError("Gemini 專有名詞結果只能包含文字對應。")
+                raise invalid_response("LLM 回傳格式錯誤", value)
             result[source] = translation
         return result
 

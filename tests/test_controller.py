@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from core.checkpoint import CheckpointStore
-from core.controller import ProgressUpdate, TranslationController
+from core.controller import ChapterExecutionOptions, ProgressUpdate, TranslationController
 from core.exceptions import TranslationCancelled
 from core.models import NovelChapter, TextChunk, TranslatedChapter, TranslatedChunk
 from core.term_memory import TermMemoryStore
@@ -94,6 +94,10 @@ class RecordingTermAnalyzer(BaseTermAnalyzer):
         self.result = result or {}
         self.failure = failure
         self.used_terms: list[dict[str, str]] = []
+
+    @property
+    def checkpoint_identity(self) -> str:
+        return "recording-failure" if self.failure is not None else "recording-success"
 
     def analyze(
         self,
@@ -252,6 +256,67 @@ def test_run_translates_checkpoints_and_formats_complete_chapter(tmp_path: Path)
     ]
 
 
+def test_run_can_keep_original_title_without_saving_title_checkpoint(tmp_path: Path) -> None:
+    controller, translator, _ = make_controller(tmp_path)
+    plan = controller.prepare("url")
+
+    result = controller.run(
+        plan,
+        options=ChapterExecutionOptions(
+            translate_title=False,
+            translate_body=True,
+            update_terms=False,
+        ),
+    )
+
+    assert translator.title_calls == []
+    assert result.chapter.translated_chapter_title == "第一章"
+    assert result.chapter.model == "test-model（僅翻譯內文）"
+    assert CheckpointStore(tmp_path / "checkpoints").load_title(plan.checkpoint_job) is None
+
+
+def test_run_can_output_original_body_without_translation_or_checkpoints(
+    tmp_path: Path,
+) -> None:
+    controller, translator, _ = make_controller(tmp_path)
+    plan = controller.prepare("url")
+
+    result = controller.run(
+        plan,
+        options=ChapterExecutionOptions(
+            translate_title=False,
+            translate_body=False,
+            update_terms=False,
+        ),
+    )
+
+    assert translator.calls == []
+    assert translator.title_calls == []
+    assert "".join(chunk.translated_text for chunk in result.chapter.chunks) == make_chapter().original_text
+    assert result.chapter.provider == "原文"
+    assert result.chapter.model == "未翻譯"
+    assert result.translated_chunks == 0
+    assert CheckpointStore(tmp_path / "checkpoints").load(plan.checkpoint_job) == ()
+
+
+def test_run_can_skip_new_term_analysis_while_translating(tmp_path: Path) -> None:
+    analyzer = RecordingTermAnalyzer({"一": "譯文"})
+    controller, _, _ = make_controller(tmp_path, analyzer=analyzer)
+
+    result = controller.run(
+        controller.prepare("url"),
+        options=ChapterExecutionOptions(update_terms=False),
+    )
+
+    assert analyzer.used_terms == []
+    assert result.term_memory_update is None
+
+
+def test_term_analysis_requires_body_translation() -> None:
+    with pytest.raises(ValueError, match="requires body translation"):
+        ChapterExecutionOptions(translate_body=False, update_terms=True)
+
+
 def test_run_resumes_and_reports_checkpoint_chunks(tmp_path: Path) -> None:
     store = CheckpointStore(tmp_path / "checkpoints")
     first_controller, first_translator, _ = make_controller(tmp_path, store=store)
@@ -302,6 +367,26 @@ def test_explicit_retranslation_clears_checkpoint(tmp_path: Path) -> None:
     assert controller.clear_checkpoint(plan) is False
 
 
+def test_selective_retranslation_clears_only_selected_checkpoint(tmp_path: Path) -> None:
+    store = CheckpointStore(tmp_path / "checkpoints")
+    controller, translator, _ = make_controller(tmp_path, store=store)
+    plan = controller.prepare("url")
+    store.save_title(plan.checkpoint_job, translator.translate_title("第一章"))
+    store.save_chunk(plan.checkpoint_job, translator.translate(plan.chunks[0]))
+
+    controller.clear_checkpoint_components(
+        plan,
+        ChapterExecutionOptions(
+            translate_title=True,
+            translate_body=False,
+            update_terms=False,
+        ),
+    )
+
+    assert store.load_title(plan.checkpoint_job) is None
+    assert len(store.load(plan.checkpoint_job)) == 1
+
+
 def test_interruption_leaves_latest_completed_checkpoint(tmp_path: Path) -> None:
     store = CheckpointStore(tmp_path / "checkpoints")
     controller, _, formatters = make_controller(
@@ -314,6 +399,75 @@ def test_interruption_leaves_latest_completed_checkpoint(tmp_path: Path) -> None
         controller.run(plan)
     assert tuple(chunk.index for chunk in store.load(plan.checkpoint_job)) == (0,)
     assert all(formatter.chapters == [] for formatter in formatters)
+
+
+def test_title_checkpoint_survives_body_failure_and_is_not_requested_again(
+    tmp_path: Path,
+) -> None:
+    store = CheckpointStore(tmp_path / "checkpoints")
+    first, first_translator, _ = make_controller(
+        tmp_path,
+        translator=RecordingTranslator(fail_at=0),
+        store=store,
+    )
+    first_plan = first.prepare("url")
+    with pytest.raises(RuntimeError, match="interruption"):
+        first.run(first_plan)
+    assert first_translator.title_calls == ["第一章"]
+    assert store.load_title(first_plan.checkpoint_job) == "譯名：第一章"
+    assert store.load(first_plan.checkpoint_job) == ()
+
+    resumed, resumed_translator, _ = make_controller(tmp_path, store=store)
+    resumed_plan = resumed.prepare("url")
+    assert resumed_plan.pending_title_count == 0
+    resumed.run(resumed_plan)
+    assert resumed_translator.title_calls == []
+    assert resumed_translator.calls == [0, 1, 2]
+
+
+def test_failed_term_stage_retries_without_retranslating_body(tmp_path: Path) -> None:
+    store = CheckpointStore(tmp_path / "checkpoints")
+    failed_analyzer = RecordingTermAnalyzer(failure=RuntimeError("analysis failed"))
+    first, first_translator, _ = make_controller(
+        tmp_path, store=store, analyzer=failed_analyzer
+    )
+    failed_result = first.run(first.prepare("url"))
+    assert failed_result.term_memory_error == "analysis failed"
+    assert first_translator.calls == [0, 1, 2]
+
+    successful_analyzer = RecordingTermAnalyzer({"一": "壹"})
+    resumed, resumed_translator, _ = make_controller(
+        tmp_path, store=store, analyzer=successful_analyzer
+    )
+    resumed_plan = resumed.prepare("url")
+    assert resumed_plan.pending_count == 0
+    assert resumed_plan.pending_term_count == 3
+    result = resumed.run(resumed_plan)
+    assert resumed_translator.calls == []
+    assert len(successful_analyzer.used_terms) == 3
+    assert result.term_memory_error is None
+
+
+def test_successful_term_stage_is_skipped_on_resume(tmp_path: Path) -> None:
+    store = CheckpointStore(tmp_path / "checkpoints")
+    analyzer = RecordingTermAnalyzer()
+    first, _, _ = make_controller(tmp_path, store=store, analyzer=analyzer)
+    first.run(first.prepare("url"))
+
+    resumed_analyzer = RecordingTermAnalyzer()
+    resumed, resumed_translator, _ = make_controller(
+        tmp_path, store=store, analyzer=resumed_analyzer
+    )
+    plan = resumed.prepare("url")
+    assert plan.pending_count == 0
+    assert plan.pending_title_count == 0
+    assert plan.pending_term_count == 0
+    updates: list[ProgressUpdate] = []
+    resumed.run(plan, progress=updates.append)
+    assert resumed_translator.calls == []
+    assert resumed_translator.title_calls == []
+    assert resumed_analyzer.used_terms == []
+    assert [item.source for item in updates].count("term_checkpoint") == 3
 
 
 def test_cancellation_stops_between_chunks_and_keeps_progress(tmp_path: Path) -> None:

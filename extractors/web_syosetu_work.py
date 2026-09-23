@@ -19,9 +19,9 @@ from core.exceptions import (
     WorkNotFoundError,
 )
 from core.models import NovelChapterEntry, NovelWork
+from core.work_directories import resolve_work_directory
 from extractors.web_syosetu import SyosetuExtractor
 from extractors.work_base import BaseWorkExtractor, CatalogProgress
-from formatters.utils import sanitize_filename_component
 
 _SUPPORTED_HOST = "ncode.syosetu.com"
 _WORK_PATH = re.compile(r"^/(?P<ncode>n[0-9a-z]+)/?$", re.IGNORECASE)
@@ -125,11 +125,14 @@ class SyosetuWorkExtractor(BaseWorkExtractor):
             "作品摘要",
             preserve_lines=True,
         )
-        work_directory = (
-            self._catalog_root / sanitize_filename_component(title)
-            if self._catalog_root is not None
-            else None
-        )
+        work_directory = None
+        if self._catalog_root is not None:
+            work_directory = resolve_work_directory(
+                self._catalog_root,
+                work_id=ncode,
+                source_url=home_url,
+                title=title,
+            )
         cached = (
             self._catalog_store.load(work_directory, ncode)
             if work_directory is not None and not force_refresh
@@ -308,7 +311,12 @@ class SyosetuWorkExtractor(BaseWorkExtractor):
                 chapters,
             )
             if self._catalog_root is not None:
-                directory = self._catalog_root / sanitize_filename_component(work.title)
+                directory = resolve_work_directory(
+                    self._catalog_root,
+                    work_id=work.work_id,
+                    source_url=work.source_url,
+                    title=work.title,
+                )
                 catalog = self._catalog_store.load(directory, work.ncode)
                 last_page = catalog.last_page if catalog is not None else 1
                 self._catalog_store.save(

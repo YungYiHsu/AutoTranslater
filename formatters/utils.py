@@ -42,7 +42,8 @@ def build_output_stem(chapter: TranslatedChapter, *, max_length: int = 160) -> s
     if max_length <= 0:
         raise ValueError("max_length must be greater than zero")
     work_title = sanitize_filename_component(chapter.source_chapter.title, max_length=80)
-    chapter_number = extract_chapter_number(chapter.source_chapter.source_url)
+    source_number = chapter.source_chapter.chapter_number
+    chapter_number = str(source_number) if source_number is not None else None
     chapter_label = (
         chapter_number.zfill(4)
         if chapter_number is not None
@@ -92,14 +93,14 @@ def merge_translated_text(chapter: TranslatedChapter) -> str:
     return "".join(chunk.translated_text for chunk in chapter.chunks)
 
 
-def read_translated_text_from_txt(path: Path) -> str:
+def read_translated_text_from_txt(path: Path, *, allow_empty: bool = False) -> str:
     """Read the editable body below the fixed TXT metadata separator."""
     content = Path(path).read_text(encoding="utf-8-sig")
     marker = f"\n{TXT_BODY_SEPARATOR}\n\n"
     _header, separator, body = content.partition(marker)
     if not separator:
         raise ValueError("TXT format is invalid because the body separator is missing.")
-    if not body.strip():
+    if not allow_empty and not body.strip():
         raise ValueError("TXT translated body is empty.")
     return body
 

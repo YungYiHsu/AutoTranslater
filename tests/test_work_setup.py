@@ -105,6 +105,25 @@ def test_valid_memory_is_reused_even_when_model_and_prompt_change(tmp_path: Path
     assert result.work.model == "old-model"
 
 
+def test_legacy_identity_without_site_or_work_id_is_reused_without_rewrite(
+    tmp_path: Path,
+) -> None:
+    work = make_work()
+    first = WorkSetupService(tmp_path, RecordingWorkTranslator()).prepare(work)
+    payload = json.loads(first.memory_path.read_text(encoding="utf-8"))
+    payload["identity"].pop("site")
+    payload["identity"].pop("work_id")
+    legacy_content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    first.memory_path.write_text(legacy_content, encoding="utf-8")
+    translator = RecordingWorkTranslator(model="new-model")
+
+    result = WorkSetupService(tmp_path, translator).prepare(work)
+
+    assert result.reused_memory
+    assert translator.calls == []
+    assert first.memory_path.read_text(encoding="utf-8") == legacy_content
+
+
 def test_fake_memory_is_not_reused_by_a_real_translator(tmp_path: Path) -> None:
     from tests.fake_work import FakeWorkTranslator
 
@@ -133,6 +152,44 @@ def test_added_chapters_do_not_invalidate_metadata_memory(tmp_path: Path) -> Non
     result = WorkSetupService(tmp_path, translator).prepare(expanded)
     assert result.reused_memory
     assert translator.calls == []
+
+
+def test_changed_work_title_reuses_identity_directory(tmp_path: Path) -> None:
+    original = make_work(title="舊作品名稱")
+    first = WorkSetupService(tmp_path, RecordingWorkTranslator()).prepare(original)
+    changed = make_work(title="新作品名稱")
+
+    result = WorkSetupService(tmp_path, RecordingWorkTranslator()).prepare(changed)
+
+    assert result.work_directory == first.work_directory
+    assert result.work_directory.name == "舊作品名稱"
+    assert not (tmp_path / "新作品名稱").exists()
+
+
+def test_same_title_is_isolated_by_site_output_root(tmp_path: Path) -> None:
+    syosetu = WorkSetupService(tmp_path / "Syosetu", RecordingWorkTranslator()).prepare(
+        make_work(title="同名作品")
+    )
+    kakuyomu_work = NovelWork(
+        "123456789",
+        "https://kakuyomu.jp/works/123456789",
+        "同名作品",
+        "作者",
+        "摘要",
+        (
+            NovelChapterEntry(
+                1,
+                "第一話",
+                "https://kakuyomu.jp/works/123456789/episodes/111",
+            ),
+        ),
+    )
+    kakuyomu = WorkSetupService(tmp_path / "Kakuyomu", RecordingWorkTranslator()).prepare(
+        kakuyomu_work
+    )
+
+    assert syosetu.work_directory == tmp_path / "Syosetu" / "同名作品"
+    assert kakuyomu.work_directory == tmp_path / "Kakuyomu" / "同名作品"
 
 
 def test_missing_synopsis_is_rebuilt_without_translation(tmp_path: Path) -> None:

@@ -53,3 +53,43 @@ def test_duplicate_ncode_is_listed_once(tmp_path: Path) -> None:
     write_memory(tmp_path / "second")
 
     assert len(discover_local_works(tmp_path)) == 1
+
+
+def test_discovers_kakuyomu_work_memory(tmp_path: Path) -> None:
+    directory = tmp_path / "kakuyomu"
+    directory.mkdir()
+    payload = {
+        "schema_version": 2,
+        "identity": {
+            "ncode": "123456789",
+            "work_id": "123456789",
+            "site": "kakuyomu",
+            "source_url": "https://kakuyomu.jp/works/123456789",
+        },
+        "source": {"title": "原文名稱"},
+        "translation": {"title": "中文名稱"},
+    }
+    (directory / "work.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    works = discover_local_works(tmp_path)
+
+    assert len(works) == 1
+    assert works[0].site == "kakuyomu"
+    assert works[0].label == "中文名稱｜原文名稱（123456789）"
+
+
+def test_discovers_schema_one_syosetu_memory_without_new_identity_fields(
+    tmp_path: Path,
+) -> None:
+    write_memory(tmp_path / "legacy")
+    path = tmp_path / "legacy" / "work.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["schema_version"] = 1
+    assert "site" not in payload["identity"]
+    assert "work_id" not in payload["identity"]
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    works = discover_local_works(tmp_path)
+
+    assert len(works) == 1
+    assert works[0].site == "syosetu"

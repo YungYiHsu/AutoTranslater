@@ -8,7 +8,7 @@ from pathlib import Path
 
 from core.chapter_progress import ChapterCompletionTracker
 from core.config import MissingApiKeyError
-from core.controller import TranslationController, TranslationPlan
+from core.controller import ChapterExecutionOptions, TranslationController, TranslationPlan
 from core.exceptions import TranslationCancelled, WorkSetupCancelled
 from core.models import NovelWork
 from core.term_organizer import (
@@ -64,8 +64,10 @@ class TranslationWorker:
         plan: TranslationPlan,
         completion_tracker: ChapterCompletionTracker | None = None,
         work_setup: WorkSetupResult | None = None,
+        *,
+        options: ChapterExecutionOptions | None = None,
     ) -> None:
-        self._start(self._run, controller, plan, completion_tracker, work_setup)
+        self._start(self._run, controller, plan, options, completion_tracker, work_setup)
 
     def start_organize_terms(
         self,
@@ -85,6 +87,38 @@ class TranslationWorker:
 
     def cancel(self) -> None:
         self._cancel_event.set()
+
+    def start_codex_maintenance(self, directory, model, *, compact=False):
+        self._start(self._codex_maintenance, directory, model, compact)
+
+    def _codex_maintenance(self, directory, model, compact):
+        from translators.codex_client import CodexClient
+        from translators.codex_session import CodexSession
+        try:
+            if compact:
+                CodexSession(directory, model).compact()
+                limits = None
+            else:
+                with CodexClient(directory) as client:
+                    client.account()
+                    limits = client.read_limits()
+            self.messages.put(WorkerMessage("codex_maintenance_done", (compact, limits)))
+        except Exception as exc:  # noqa: BLE001 - Tk error boundary
+            self.messages.put(WorkerMessage("error", exc))
+
+    def start_codex_auth(self, directory: Path, *, sign_in: bool) -> None:
+        self._start(self._codex_auth, directory, sign_in)
+
+    def _codex_auth(self, directory: Path, sign_in: bool) -> None:
+        from translators.codex_client import check_login, login
+
+        try:
+            if sign_in:
+                login()
+            account = check_login(directory, include_models=True)
+            self.messages.put(WorkerMessage("codex_auth_done", account))
+        except Exception as exc:  # noqa: BLE001
+            self.messages.put(WorkerMessage("error", exc))
 
     def _start(self, target: object, *args: object) -> None:
         if self.is_running:
@@ -174,12 +208,14 @@ class TranslationWorker:
         self,
         controller: TranslationController,
         plan: TranslationPlan,
+        options: ChapterExecutionOptions | None,
         completion_tracker: ChapterCompletionTracker | None,
         work_setup: WorkSetupResult | None,
     ) -> None:
         try:
             result = controller.run(
                 plan,
+                options=options,
                 progress=lambda update: self.messages.put(WorkerMessage("progress", update)),
                 should_cancel=self._cancel_event.is_set,
             )

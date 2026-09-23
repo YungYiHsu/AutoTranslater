@@ -57,6 +57,7 @@ def test_load_config_accepts_valid_values(tmp_path: Path) -> None:
         {"provider": "unknown"},
         {"chunk_size": 0},
         {"retry_attempts": -1},
+        {"retry_attempts": 11},
         {"saved_models": "not-a-list"},
         {"saved_models": [""]},
         {"saved_models": [123]},

@@ -37,6 +37,7 @@ analysis = Analysis(
     datas=[
         (str(project_root / "resources"), "resources"),
         *google_datas,
+        *collect_data_files("tzdata"),
     ],
     hiddenimports=[
         *google_hiddenimports,
@@ -46,7 +47,7 @@ analysis = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["pytest", "mypy", "ruff"],
+    excludes=["pytest", "mypy", "ruff", "developer"],
     noarchive=False,
     optimize=0,
 )

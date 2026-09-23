@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.checkpoint import CheckpointJob, CheckpointStore
-from core.exceptions import GeminiFreeTierQuotaError, TranslationCancelled
+from core.exceptions import (
+    ApiRequestError,
+    GeminiFreeTierQuotaError,
+    InvalidLlmResponseError,
+    TranslationCancelled,
+)
 from core.models import NovelChapter, TextChunk, TranslatedChapter, TranslatedChunk
 from core.term_memory import TermMemoryStore, TermMemoryUpdate
 from core.text_chunker import TextChunker
@@ -26,6 +31,8 @@ class TranslationPlan:
     chunks: tuple[TextChunk, ...]
     checkpoint_job: CheckpointJob
     completed_chunks: tuple[TranslatedChunk, ...]
+    translated_chapter_title: str | None = None
+    completed_term_indexes: frozenset[int] = frozenset()
     matched_terms: tuple[tuple[str, str], ...] = ()
     translated_work_title: str | None = None
 
@@ -40,6 +47,36 @@ class TranslationPlan:
     @property
     def pending_count(self) -> int:
         return self.total_chunks - self.completed_count
+
+    @property
+    def pending_title_count(self) -> int:
+        return 0 if self.translated_chapter_title else 1
+
+    @property
+    def pending_term_count(self) -> int:
+        return self.total_chunks - len(self.completed_term_indexes)
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterExecutionOptions:
+    """User-selected chapter components to translate or analyze."""
+
+    translate_title: bool = True
+    translate_body: bool = True
+    update_terms: bool = True
+
+    def __post_init__(self) -> None:
+        if not all(
+            isinstance(value, bool)
+            for value in (self.translate_title, self.translate_body, self.update_terms)
+        ):
+            raise TypeError("chapter execution options must be booleans")
+        if self.update_terms and not self.translate_body:
+            raise ValueError("term-memory analysis requires body translation")
+
+    @property
+    def requires_api(self) -> bool:
+        return self.translate_title or self.translate_body or self.update_terms
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,10 +161,37 @@ class TranslationController:
             raise ValueError("plan is incompatible with the configured controller")
         return self._checkpoint_store.clear(plan.checkpoint_job)
 
+    def clear_checkpoint_components(
+        self,
+        plan: TranslationPlan,
+        options: ChapterExecutionOptions,
+    ) -> bool:
+        """Clear only components selected for an explicit retranslation."""
+        if not isinstance(plan, TranslationPlan):
+            raise TypeError("plan must be a TranslationPlan")
+        if not isinstance(options, ChapterExecutionOptions):
+            raise TypeError("options must be ChapterExecutionOptions")
+        return self._checkpoint_store.clear_components(
+            plan.checkpoint_job,
+            title=options.translate_title,
+            chunks=options.translate_body,
+            terms=options.update_terms,
+        )
+
     def prepare(self, url: str) -> TranslationPlan:
         """Extract, split, and inspect reusable progress without translating."""
         source_chapter = self._extractor.extract(url)
         chunks = self._chunker.split(source_chapter.original_text)
+        return self._prepare_chunks(source_chapter, chunks)
+
+    def resegment(self, plan: TranslationPlan, count: int) -> TranslationPlan:
+        """Reanalyze cached source without extraction or any model request."""
+        chunks = self._chunker.split_count(plan.source_chapter.original_text, count)
+        return self._prepare_chunks(plan.source_chapter, chunks)
+
+    def _prepare_chunks(
+        self, source_chapter: NovelChapter, chunks: tuple[TextChunk, ...]
+    ) -> TranslationPlan:
         work_directory = self._work_directory(source_chapter)
         terms = self._term_memory_store.load(work_directory)
         matched_terms = self._term_memory_store.match(
@@ -142,11 +206,27 @@ class TranslationController:
             system_prompt=self._translator.checkpoint_identity,
         )
         completed = self._checkpoint_store.load(job)
+        translated_title = self._checkpoint_store.load_title(job)
+        completed_terms = (
+            frozenset(
+                translated.index
+                for translated in completed
+                if self._checkpoint_store.term_completed(
+                    job,
+                    translated,
+                    self._term_analyzer.checkpoint_identity,
+                )
+            )
+            if self._term_analyzer is not None
+            else frozenset()
+        )
         return TranslationPlan(
             source_chapter=source_chapter,
             chunks=chunks,
             checkpoint_job=job,
             completed_chunks=completed,
+            translated_chapter_title=translated_title,
+            completed_term_indexes=completed_terms,
             matched_terms=tuple(matched_terms.items()),
             translated_work_title=self._translated_work_title,
         )
@@ -155,6 +235,7 @@ class TranslationController:
         self,
         plan: TranslationPlan,
         *,
+        options: ChapterExecutionOptions | None = None,
         progress: Callable[[ProgressUpdate], None] | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> TranslationResult:
@@ -168,11 +249,27 @@ class TranslationController:
         ):
             raise ValueError("plan is incompatible with the configured controller")
 
-        completed = list(self._checkpoint_store.load(plan.checkpoint_job))
+        selected = options or ChapterExecutionOptions()
+        if self.provider == "codex":
+            from translators.codex_llm import CodexTranslator
+
+            if isinstance(self._translator, CodexTranslator):
+                self._translator.chapter_number = plan.source_chapter.chapter_number
+                self._translator.context = (
+                    f"{plan.source_chapter.source_url}\n{plan.source_chapter.chapter_title}\n"
+                    f"分段識別：{plan.checkpoint_job.job_id}"
+                )
+        if not isinstance(selected, ChapterExecutionOptions):
+            raise TypeError("options must be ChapterExecutionOptions")
+
+        checkpoint_chunks = self._checkpoint_store.load(plan.checkpoint_job)
+        completed = list(checkpoint_chunks) if selected.translate_body else []
         reused_count = len(completed)
         temporary_terms = dict(plan.matched_terms)
         translated_chapter_title = (
-            completed[0].translated_chapter_title if completed else None
+            self._checkpoint_store.load_title(plan.checkpoint_job)
+            if selected.translate_title
+            else plan.source_chapter.chapter_title
         )
         new_terms: dict[str, str] = {}
         term_errors: list[str] = []
@@ -181,19 +278,21 @@ class TranslationController:
         for index, translated in enumerate(completed):
             if progress:
                 progress(ProgressUpdate(index + 1, plan.total_chunks, "checkpoint"))
-            temporary_terms, update, error = self._analyze_chunk_terms(
-                plan,
-                translated,
-                temporary_terms,
-                progress,
-            )
-            new_terms.update(update.added)
-            term_rejected += update.rejected
-            term_conflicts += update.conflicts
-            if error:
-                term_errors.append(error)
+            if selected.update_terms:
+                temporary_terms, update, error = self._analyze_chunk_terms(
+                    plan,
+                    translated,
+                    temporary_terms,
+                    translated_chapter_title,
+                    progress,
+                )
+                new_terms.update(update.added)
+                term_rejected += update.rejected
+                term_conflicts += update.conflicts
+                if error:
+                    term_errors.append(error)
 
-        if translated_chapter_title is None:
+        if selected.translate_title and translated_chapter_title is None:
             if should_cancel and should_cancel():
                 raise TranslationCancelled("Translation was cancelled by the user.")
             if progress:
@@ -202,63 +301,67 @@ class TranslationController:
                 plan.source_chapter.chapter_title,
                 temporary_terms,
             )
+            self._checkpoint_store.save_title(
+                plan.checkpoint_job,
+                translated_chapter_title,
+            )
 
         translated_count = 0
-        for source_chunk in plan.chunks[reused_count:]:
-            if should_cancel and should_cancel():
-                raise TranslationCancelled("Translation was cancelled by the user.")
-            if progress:
-                progress(
-                    ProgressUpdate(
-                        source_chunk.index + 1,
-                        plan.total_chunks,
-                        "translating",
+        if selected.translate_body:
+            for source_chunk in plan.chunks[reused_count:]:
+                if should_cancel and should_cancel():
+                    raise TranslationCancelled("Translation was cancelled by the user.")
+                if progress:
+                    progress(
+                        ProgressUpdate(
+                            source_chunk.index + 1,
+                            plan.total_chunks,
+                            "translating",
+                        )
                     )
+                translated = self._translator.translate(
+                    source_chunk,
+                    temporary_terms,
                 )
-            translated = self._translator.translate(
-                source_chunk,
-                temporary_terms,
-            )
-            if translated.source_chunk != source_chunk:
-                raise ValueError("translator returned a result for a different source chunk")
-            if source_chunk.index == 0:
-                translated = TranslatedChunk(
-                    source_chunk=source_chunk,
-                    translated_text=translated.translated_text,
-                    translated_chapter_title=translated_chapter_title,
-                )
-            self._checkpoint_store.save_chunk(plan.checkpoint_job, translated)
-            completed.append(translated)
-            translated_count += 1
-            if progress:
-                progress(
-                    ProgressUpdate(
-                        len(completed),
-                        plan.total_chunks,
-                        "translated",
+                if translated.source_chunk != source_chunk:
+                    raise ValueError("translator returned a result for a different source chunk")
+                self._checkpoint_store.save_chunk(plan.checkpoint_job, translated)
+                completed.append(translated)
+                translated_count += 1
+                if progress:
+                    progress(
+                        ProgressUpdate(
+                            len(completed),
+                            plan.total_chunks,
+                            "translated",
+                        )
                     )
-                )
-            temporary_terms, update, error = self._analyze_chunk_terms(
-                plan,
-                translated,
-                temporary_terms,
-                progress,
-            )
-            new_terms.update(update.added)
-            term_rejected += update.rejected
-            term_conflicts += update.conflicts
-            if error:
-                term_errors.append(error)
+                if selected.update_terms:
+                    temporary_terms, update, error = self._analyze_chunk_terms(
+                        plan,
+                        translated,
+                        temporary_terms,
+                        translated_chapter_title,
+                        progress,
+                    )
+                    new_terms.update(update.added)
+                    term_rejected += update.rejected
+                    term_conflicts += update.conflicts
+                    if error:
+                        term_errors.append(error)
+        else:
+            completed = [TranslatedChunk(chunk, chunk.text) for chunk in plan.chunks]
 
         if should_cancel and should_cancel():
             raise TranslationCancelled("Translation was cancelled by the user.")
         if not translated_chapter_title:
             raise ValueError("first translated chunk did not include a translated chapter title")
+        output_provider, output_model = self._output_identity(selected)
         chapter = TranslatedChapter(
             source_chapter=plan.source_chapter,
             chunks=tuple(completed),
-            provider=self.provider,
-            model=self.model,
+            provider=output_provider,
+            model=output_model,
             translated_work_title=plan.translated_work_title,
             translated_chapter_title=translated_chapter_title,
         )
@@ -266,24 +369,11 @@ class TranslationController:
         output_paths = tuple(
             formatter.save(chapter, work_directory) for formatter in self._formatters
         )
-        term_update: TermMemoryUpdate | None = None
-        if self._term_analyzer is not None:
-            try:
-                if progress:
-                    progress(ProgressUpdate(0, 0, "updating_terms"))
-                persisted = self._term_memory_store.update(
-                    work_directory,
-                    new_terms,
-                    source_text=plan.source_chapter.original_text,
-                    translated_text="".join(item.translated_text for item in chapter.chunks),
-                )
-                term_update = TermMemoryUpdate(
-                    persisted.added,
-                    term_rejected + persisted.rejected,
-                    term_conflicts + persisted.conflicts,
-                )
-            except Exception as exc:  # noqa: BLE001 - outputs remain valid when memory fails.
-                term_errors.append(str(exc))
+        term_update = (
+            TermMemoryUpdate(new_terms, term_rejected, term_conflicts)
+            if selected.update_terms and self._term_analyzer is not None
+            else None
+        )
         return TranslationResult(
             chapter=chapter,
             output_paths=output_paths,
@@ -293,16 +383,40 @@ class TranslationController:
             term_memory_error="；".join(dict.fromkeys(term_errors)) or None,
         )
 
+    def _output_identity(self, options: ChapterExecutionOptions) -> tuple[str, str]:
+        if options.translate_title and options.translate_body:
+            return self.provider, self.model
+        if options.translate_title:
+            return self.provider, f"{self.model}（僅翻譯標題）"
+        if options.translate_body:
+            return self.provider, f"{self.model}（僅翻譯內文）"
+        return "原文", "未翻譯"
+
     def _analyze_chunk_terms(
         self,
         plan: TranslationPlan,
         translated: TranslatedChunk,
         temporary_terms: dict[str, str],
+        translated_chapter_title: str | None,
         progress: Callable[[ProgressUpdate], None] | None,
     ) -> tuple[dict[str, str], TermMemoryUpdate, str | None]:
         """Add one translated chunk's validated terms to chapter-local memory."""
         empty = TermMemoryUpdate({}, 0, 0)
         if self._term_analyzer is None:
+            return temporary_terms, empty, None
+        if self._checkpoint_store.term_completed(
+            plan.checkpoint_job,
+            translated,
+            self._term_analyzer.checkpoint_identity,
+        ):
+            if progress:
+                progress(
+                    ProgressUpdate(
+                        translated.index + 1,
+                        plan.total_chunks,
+                        "term_checkpoint",
+                    )
+                )
             return temporary_terms, empty, None
         if progress:
             progress(ProgressUpdate(translated.index + 1, plan.total_chunks, "analyzing_terms"))
@@ -318,18 +432,26 @@ class TranslationController:
             provider=self.provider,
             model=self.model,
             translated_work_title=plan.translated_work_title,
-            translated_chapter_title=translated.translated_chapter_title,
+            translated_chapter_title=translated_chapter_title,
         )
         try:
             candidates = self._term_analyzer.analyze(chunk_chapter, temporary_terms)
-            merged, update = self._term_memory_store.merge_candidates(
-                temporary_terms,
+            work_directory = self._work_directory(plan.source_chapter)
+            update = self._term_memory_store.update(
+                work_directory,
                 candidates,
                 source_text=source_chunk.text,
                 translated_text=translated.translated_text,
             )
+            merged = dict(temporary_terms)
+            merged.update(update.added)
+            self._checkpoint_store.save_term_completed(
+                plan.checkpoint_job,
+                translated,
+                self._term_analyzer.checkpoint_identity,
+            )
             return merged, update, None
-        except GeminiFreeTierQuotaError:
+        except (GeminiFreeTierQuotaError, ApiRequestError, InvalidLlmResponseError):
             raise
         except Exception as exc:  # noqa: BLE001 - a failed memory pass must not lose正文 progress.
             return temporary_terms, empty, str(exc)
@@ -339,6 +461,7 @@ class TranslationController:
 
 
 __all__ = [
+    "ChapterExecutionOptions",
     "ProgressUpdate",
     "TranslationController",
     "TranslationPlan",

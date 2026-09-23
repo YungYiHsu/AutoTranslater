@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.2.0"
+    [string]$Version = "0.3.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,7 +32,7 @@ try {
         saved_models = @()
         output_directory = "outputs"
         chunk_size = 4000
-        retry_attempts = 3
+        retry_attempts = 0
     }
     $releaseConfig | ConvertTo-Json -Depth 3 |
         Set-Content -LiteralPath (Join-Path $stagingDirectory "config.json") -Encoding UTF8

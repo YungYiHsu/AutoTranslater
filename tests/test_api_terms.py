@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from core.exceptions import TermMemoryError
+from core.exceptions import InvalidLlmResponseError
 from core.models import NovelChapter, TextChunk, TranslatedChapter, TranslatedChunk
 from translators.api_terms import ApiTermAnalyzer
 
@@ -85,5 +85,6 @@ def test_invalid_json_is_rejected(tmp_path: Path) -> None:
         prompt_path=prompt_path(tmp_path),
         client=SimpleNamespace(models=SimpleNamespace(generate_content=call)),
     )
-    with pytest.raises(TermMemoryError, match="有效 JSON"):
+    with pytest.raises(InvalidLlmResponseError) as caught:
         analyzer.analyze(make_chapter(), {})
+    assert caught.value.llm_output == "not-json"

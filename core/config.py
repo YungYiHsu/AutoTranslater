@@ -6,7 +6,7 @@ import getpass
 import json
 import os
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -32,9 +32,15 @@ class AppConfig:
 
     model: str = ""
     saved_models: tuple[str, ...] = ()
+    codex_model: str = ""
+    codex_reasoning_effort: str = "low"
+    codex_model_efforts: dict[str, str] = field(default_factory=dict)
     output_directory: str = "outputs"
     chunk_size: int = 4000
-    retry_attempts: int = 3
+    retry_attempts: int = 0
+    translate_title: bool = True
+    translate_body: bool = True
+    update_terms: bool = True
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any]) -> AppConfig:
@@ -43,9 +49,15 @@ class AppConfig:
         known_fields = {
             "model",
             "saved_models",
+            "codex_model",
+            "codex_reasoning_effort",
+            "codex_model_efforts",
             "output_directory",
             "chunk_size",
             "retry_attempts",
+            "translate_title",
+            "translate_body",
+            "update_terms",
         }
         unknown = set(values) - known_fields
         if unknown:
@@ -60,6 +72,25 @@ class AppConfig:
 
         if not isinstance(model, str):
             raise ConfigurationError("model must be a string")
+        codex_model = values.get("codex_model", defaults.codex_model)
+        codex_effort = values.get("codex_reasoning_effort", defaults.codex_reasoning_effort)
+        if not isinstance(codex_effort, str) or codex_effort not in {
+            "default", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+        }:
+            raise ConfigurationError("Invalid codex_reasoning_effort")
+        if not isinstance(codex_model, str):
+            raise ConfigurationError("codex_model must be a string")
+        efforts = values.get("codex_model_efforts", {})
+        valid_efforts = {"default", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+        if not isinstance(efforts, dict) or any(
+            not isinstance(k, str) or not k.strip() or not isinstance(v, str) or v not in valid_efforts
+            for k, v in efforts.items()
+        ):
+            raise ConfigurationError("Invalid codex_model_efforts")
+        efforts = dict(efforts)
+        if codex_model.strip() not in {"", "default"} and "codex_reasoning_effort" in values:
+            efforts.setdefault(codex_model.strip(), codex_effort)
+        codex_effort = efforts.get(codex_model.strip(), codex_effort)
         if not isinstance(saved_models, (list, tuple)) or isinstance(saved_models, str):
             raise ConfigurationError("saved_models must be a list of non-empty strings")
         normalized_saved_models: list[str] = []
@@ -77,20 +108,34 @@ class AppConfig:
             not isinstance(retry_attempts, int)
             or isinstance(retry_attempts, bool)
             or retry_attempts < 0
+            or retry_attempts > 10
         ):
-            raise ConfigurationError("retry_attempts must be a non-negative integer")
+            raise ConfigurationError("retry_attempts must be an integer from 0 to 10")
+
+        selections = {
+            name: values.get(name, getattr(defaults, name))
+            for name in ("translate_title", "translate_body", "update_terms")
+        }
+        if any(type(value) is not bool for value in selections.values()):
+            raise ConfigurationError("translation options must be booleans")
+        if not selections["translate_body"]:
+            selections["update_terms"] = False
 
         return cls(
             model=model,
+            codex_model=codex_model.strip(),
+            codex_reasoning_effort=codex_effort,
+            codex_model_efforts=efforts,
             saved_models=tuple(normalized_saved_models),
             output_directory=output_directory,
             chunk_size=chunk_size,
             retry_attempts=retry_attempts,
+            **selections,
         )
 
     @property
     def provider(self) -> str:
-        """Return the only supported cloud provider."""
+        """Return the API provider; Codex uses its separate execution mode."""
         return "gemini"
 
 

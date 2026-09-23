@@ -30,9 +30,20 @@ class NovelChapterEntry:
             raise ValueError("number must be a positive integer")
         _require_non_blank(self.title, "title")
         _require_non_blank(self.source_url, "source_url")
-        segments = [part for part in urlsplit(self.source_url).path.split("/") if part]
-        if not segments or segments[-1] != str(self.number):
+        parsed = urlsplit(self.source_url)
+        segments = [part for part in parsed.path.split("/") if part]
+        if parsed.hostname == "ncode.syosetu.com" and (
+            not segments or segments[-1] != str(self.number)
+        ):
             raise ValueError("source_url chapter number must match number")
+        if parsed.hostname == "kakuyomu.jp" and (
+            len(segments) != 4
+            or segments[0] != "works"
+            or segments[2] != "episodes"
+            or not segments[1].isdigit()
+            or not segments[3].isdigit()
+        ):
+            raise ValueError("source_url must be a Kakuyomu episode URL")
         object.__setattr__(self, "title", self.title.strip())
         object.__setattr__(self, "source_url", self.source_url.strip())
 
@@ -54,26 +65,39 @@ class NovelWork:
         _require_non_blank(self.title, "title")
         _require_non_blank(self.author, "author")
         _require_non_blank(self.synopsis, "synopsis")
-        normalized_ncode = self.ncode.strip().lower()
-        if _NCODE.fullmatch(normalized_ncode) is None:
-            raise ValueError("ncode has an invalid format")
-        segments = [part.lower() for part in urlsplit(self.source_url).path.split("/") if part]
-        if segments != [normalized_ncode]:
-            raise ValueError("source_url must be the matching work home URL")
         if not isinstance(self.chapters, tuple) or not self.chapters:
             raise ValueError("chapters must be a non-empty tuple")
         if not all(isinstance(chapter, NovelChapterEntry) for chapter in self.chapters):
             raise TypeError("all chapters must be NovelChapterEntry instances")
+        normalized_ncode = self.ncode.strip().lower()
+        parsed = urlsplit(self.source_url)
+        segments = [part.lower() for part in parsed.path.split("/") if part]
+        if parsed.hostname == "ncode.syosetu.com":
+            if _NCODE.fullmatch(normalized_ncode) is None or segments != [normalized_ncode]:
+                raise ValueError("source_url must be the matching Naro work home URL")
+            expected_prefix = f"/{normalized_ncode}/"
+            chapters_match = all(
+                urlsplit(chapter.source_url).hostname == "ncode.syosetu.com"
+                and urlsplit(chapter.source_url).path.lower().startswith(expected_prefix)
+                for chapter in self.chapters
+            )
+        elif parsed.hostname == "kakuyomu.jp":
+            if not normalized_ncode.isdigit() or segments != ["works", normalized_ncode]:
+                raise ValueError("source_url must be the matching Kakuyomu work home URL")
+            expected_prefix = f"/works/{normalized_ncode}/episodes/"
+            chapters_match = all(
+                urlsplit(chapter.source_url).hostname == "kakuyomu.jp"
+                and urlsplit(chapter.source_url).path.startswith(expected_prefix)
+                for chapter in self.chapters
+            )
+        else:
+            raise ValueError("source_url uses an unsupported novel website")
         numbers = tuple(chapter.number for chapter in self.chapters)
         if len(numbers) != len(set(numbers)):
             raise ValueError("chapter numbers must be unique")
         if numbers != tuple(sorted(numbers)):
             raise ValueError("chapters must be ordered by number")
-        expected_prefix = f"/{normalized_ncode}/"
-        if any(
-            not urlsplit(chapter.source_url).path.lower().startswith(expected_prefix)
-            for chapter in self.chapters
-        ):
+        if not chapters_match:
             raise ValueError("all chapters must belong to this work")
         object.__setattr__(self, "ncode", normalized_ncode)
         object.__setattr__(self, "source_url", self.source_url.strip())
@@ -89,6 +113,16 @@ class NovelWork:
             if chapter.number == number:
                 return chapter
         raise ChapterNotFoundError(f"作品中不存在第 {number} 章。")
+
+    @property
+    def work_id(self) -> str:
+        """Return the provider-neutral work identifier."""
+        return self.ncode
+
+    @property
+    def site(self) -> str:
+        """Return the source website key."""
+        return "kakuyomu" if urlsplit(self.source_url).hostname == "kakuyomu.jp" else "syosetu"
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,15 +159,28 @@ class NovelChapter:
     chapter_title: str
     source_url: str
     original_text: str
+    chapter_number: int | None = None
 
     def __post_init__(self) -> None:
         _require_non_blank(self.title, "title")
         _require_non_blank(self.chapter_title, "chapter_title")
         _require_non_blank(self.source_url, "source_url")
         _require_non_blank(self.original_text, "original_text")
+        chapter_number = self.chapter_number
+        if chapter_number is None and urlsplit(self.source_url).hostname != "kakuyomu.jp":
+            segments = [part for part in urlsplit(self.source_url).path.split("/") if part]
+            if segments and segments[-1].isascii() and segments[-1].isdigit():
+                chapter_number = int(segments[-1])
+        if chapter_number is not None and (
+            not isinstance(chapter_number, int)
+            or isinstance(chapter_number, bool)
+            or chapter_number <= 0
+        ):
+            raise ValueError("chapter_number must be a positive integer")
         object.__setattr__(self, "title", self.title.strip())
         object.__setattr__(self, "chapter_title", self.chapter_title.strip())
         object.__setattr__(self, "source_url", self.source_url.strip())
+        object.__setattr__(self, "chapter_number", chapter_number)
 
 
 @dataclass(frozen=True, slots=True)

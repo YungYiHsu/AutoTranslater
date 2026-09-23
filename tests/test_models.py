@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from typing import Any
 
 import pytest
 
@@ -29,7 +30,7 @@ def test_novel_chapter_trims_metadata_but_preserves_text() -> None:
 
 @pytest.mark.parametrize("field_name", ["title", "chapter_title", "source_url", "original_text"])
 def test_novel_chapter_rejects_blank_required_fields(field_name: str) -> None:
-    values = {
+    values: dict[str, Any] = {
         "title": "小說標題",
         "chapter_title": "第一話",
         "source_url": "https://example.test/novel/1",

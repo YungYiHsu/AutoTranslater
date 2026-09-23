@@ -57,6 +57,7 @@ PROMPT_TEMPLATES = (
         key="term_organization",
         label="重新整理記憶",
         description=(
+            "供 Gemini API 的手動專有名詞整理使用，不會整理 Codex 對話記憶。"
             "可使用 {Term_Memory} 表示本次整理批次；缺少時會自動附加，"
             "重複時無法儲存。固定 JSON 輸出格式顯示於下方。"
         ),

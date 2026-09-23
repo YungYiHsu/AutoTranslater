@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from core.config import AppConfig
-from core.exceptions import TranslationError
+from core.exceptions import ApiRequestError, InvalidLlmResponseError, TranslationError
 from core.models import TextChunk
 from core.prompt_contracts import CHAPTER_OUTPUT_CONTRACT
 from translators.api_llm import (
@@ -184,7 +184,7 @@ def test_exhausted_transient_errors_are_wrapped(tmp_path: Path) -> None:
         client=gemini_client(call),
         sleeper=lambda _seconds: None,
     )
-    with pytest.raises(TranslationError, match="2 attempt"):
+    with pytest.raises(ApiRequestError, match="503"):
         translator.translate(TextChunk(index=0, text="原文"))
     assert len(call.calls) == 2
 
@@ -199,7 +199,7 @@ def test_permanent_error_is_not_retried(tmp_path: Path) -> None:
         client=gemini_client(call),
         sleeper=lambda _seconds: None,
     )
-    with pytest.raises(TranslationError, match="rejected"):
+    with pytest.raises(ApiRequestError, match="401"):
         translator.translate(TextChunk(index=0, text="原文"))
     assert len(call.calls) == 1
 
@@ -213,8 +213,9 @@ def test_empty_provider_response_is_rejected(tmp_path: Path, empty_value: Any) -
         prompt_path=prompt_file(tmp_path),
         client=gemini_client(call),
     )
-    with pytest.raises(TranslationError, match="empty translation"):
+    with pytest.raises(InvalidLlmResponseError) as caught:
         translator.translate(TextChunk(index=0, text="原文"))
+    assert caught.value.llm_output
 
 
 @pytest.mark.parametrize(

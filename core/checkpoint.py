@@ -102,7 +102,7 @@ class CheckpointJob:
         }
 
 
-class CheckpointStore:
+class LegacyCheckpointStore:
     """Load and update one JSON checkpoint per content-addressed job."""
 
     def __init__(
@@ -259,5 +259,9 @@ class CheckpointStore:
                 temporary_path.unlink(missing_ok=True)
             raise CheckpointError(f"Unable to save checkpoint {path.name}.") from exc
 
+
+from core.checkpoint_components import ComponentCheckpointStore
+
+CheckpointStore = ComponentCheckpointStore
 
 __all__ = ["CheckpointJob", "CheckpointStore"]

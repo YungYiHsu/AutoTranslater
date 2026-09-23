@@ -95,7 +95,12 @@ class WorkMemoryStore:
         completed = existing.completed_chapters if existing is not None else {}
         payload = {
             "schema_version": _CURRENT_SCHEMA_VERSION if completed else 1,
-            "identity": {"ncode": work.ncode, "source_url": work.source_url},
+            "identity": {
+                "ncode": work.ncode,
+                "work_id": work.work_id,
+                "site": work.site,
+                "source_url": work.source_url,
+            },
             "source": {
                 "title": work.title,
                 "author": work.author,

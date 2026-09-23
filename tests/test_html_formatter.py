@@ -9,6 +9,7 @@ import pytest
 from core.exceptions import FormatterError
 from formatters.html_formatter import HtmlFormatter
 from formatters.txt_formatter import TxtFormatter
+from formatters.utils import TXT_BODY_SEPARATOR
 from tests.formatter_helpers import make_translated_chapter
 
 
@@ -163,3 +164,21 @@ def test_html_generation_rejects_missing_txt_without_overwriting_html(tmp_path: 
         HtmlFormatter(auto_open=False, overwrite=True).save(chapter, tmp_path)
 
     assert html_path.read_text(encoding="utf-8") == "保留內容"
+
+
+def test_save_blank_creates_synced_draft_html_for_empty_txt(tmp_path: Path) -> None:
+    chapter = make_translated_chapter()
+    txt_path = tmp_path / "0001 - 測試小說.txt"
+    txt_path.write_text(f"章節資料\n\n{TXT_BODY_SEPARATOR}\n\n", encoding="utf-8-sig")
+    html_path = tmp_path / "0001 - 測試小說.html"
+
+    HtmlFormatter(auto_open=False).save_blank(
+        chapter,
+        tmp_path,
+        txt_path=txt_path,
+        destination_path=html_path,
+    )
+
+    html = html_path.read_text(encoding="utf-8")
+    assert 'name="translation-status" content="draft"' in html
+    assert HtmlFormatter.txt_matches_html(txt_path, html_path)

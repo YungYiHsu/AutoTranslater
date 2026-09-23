@@ -133,6 +133,7 @@ class SyosetuExtractor(BaseExtractor):
             chapter_title=chapter_title,
             source_url=self._canonical_url(source_url),
             original_text=original_text,
+            chapter_number=int(source_url.rstrip("/").rsplit("/", 1)[-1]),
         )
 
     def _find_work_title(self, soup: BeautifulSoup, ncode: str, chapter_title: str) -> str:

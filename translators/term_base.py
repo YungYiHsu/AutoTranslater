@@ -9,6 +9,11 @@ from core.models import TranslatedChapter
 
 
 class BaseTermAnalyzer(ABC):
+    @property
+    def checkpoint_identity(self) -> str:
+        """Return a stable identity for automatic term-analysis behavior."""
+        return f"{type(self).__module__}.{type(self).__qualname__}"
+
     @abstractmethod
     def analyze(
         self,

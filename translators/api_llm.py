@@ -12,8 +12,10 @@ from typing import Any
 
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from core.api_usage import DailyApiUsage
 from core.config import AppConfig
-from core.exceptions import TranslationError
+from core.exceptions import InvalidLlmResponseError, TranslationError
+from core.gemini_settings import request_config
 from core.models import TextChunk, TranslatedChunk
 from core.paths import get_resource_path
 from core.prompt_composer import (
@@ -22,6 +24,7 @@ from core.prompt_composer import (
     validate_translation_template,
 )
 from core.prompt_contracts import CHAPTER_OUTPUT_CONTRACT, append_prompt_contract
+from translators.api_errors import invalid_response, request_error, response_text
 from translators.base import BaseTranslator
 from translators.gemini_errors import raise_if_free_tier_quota
 
@@ -53,9 +56,10 @@ class ApiLlmTranslator(BaseTranslator):
         *,
         model: str,
         api_key: str,
-        retry_attempts: int = 3,
+        retry_attempts: int = 0,
         prompt_path: Path | None = None,
         client: Any | None = None,
+        usage: DailyApiUsage | None = None,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         if not isinstance(model, str) or not model.strip():
@@ -75,6 +79,7 @@ class ApiLlmTranslator(BaseTranslator):
         self._system_prompt = self._load_prompt(self._prompt_path)
         validate_translation_template(self._system_prompt)
         self._client = client or self._create_client()
+        self._usage = usage
         self._sleeper = sleeper
         self._logger = logging.getLogger("novel_translator.translator.api")
 
@@ -137,9 +142,7 @@ class ApiLlmTranslator(BaseTranslator):
                 terms or {},
             )
         except _RetryableProviderError as exc:
-            raise TranslationError(
-                f"{self.provider} remained unavailable after {self._retry_attempts + 1} attempt(s)."
-            ) from exc
+            raise request_error(exc) from exc
 
         return TranslatedChunk(
             source_chunk=chunk,
@@ -169,26 +172,23 @@ class ApiLlmTranslator(BaseTranslator):
         try:
             return retrying(self._translate_title_once, prompt)
         except _RetryableProviderError as exc:
-            raise TranslationError(
-                f"{self.provider} remained unavailable after "
-                f"{self._retry_attempts + 1} attempt(s)."
-            ) from exc
+            raise request_error(exc) from exc
 
     def _translate_title_once(self, prompt: str) -> str:
         try:
+            if self._usage is not None:
+                self._usage.record(self._model)
             response = self._client.models.generate_content(
                 model=self.model,
                 contents=prompt,
-                config={"temperature": 0.2},
+                config=request_config({"temperature": 0.2}),
             )
-            raw_text = response.text
         except Exception as exc:
             raise_if_free_tier_quota(exc)
             if _is_retryable_provider_error(exc):
                 raise _RetryableProviderError(type(exc).__name__) from exc
-            raise TranslationError(
-                f"{self.provider} rejected the chapter title request ({type(exc).__name__})."
-            ) from exc
+            raise request_error(exc) from exc
+        raw_text = response_text(response)
         return _normalize_response(raw_text, self.provider).strip()
 
     def _translate_once(
@@ -202,21 +202,21 @@ class ApiLlmTranslator(BaseTranslator):
                 source_text,
                 terms,
             )
+            if self._usage is not None:
+                self._usage.record(self._model)
             response = self._client.models.generate_content(
                 model=self.model,
                 contents=prompt,
-                config={
+                config=request_config({
                     "temperature": 0.2,
-                },
+                }),
             )
-            raw_text = response.text
         except Exception as exc:
             raise_if_free_tier_quota(exc)
             if _is_retryable_provider_error(exc):
                 raise _RetryableProviderError(type(exc).__name__) from exc
-            raise TranslationError(
-                f"{self.provider} rejected the translation request ({type(exc).__name__})."
-            ) from exc
+            raise request_error(exc) from exc
+        raw_text = response_text(response)
 
         return _normalize_response(raw_text, self.provider)
 
@@ -256,9 +256,12 @@ def _is_retryable_provider_error(exc: Exception) -> bool:
 
 def _normalize_response(value: Any, provider: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise TranslationError(f"{provider} returned an empty translation.")
+        raise invalid_response("LLM 回傳內容無效", value)
     fenced = _CODE_FENCE.fullmatch(value)
-    return fenced.group(1).strip() if fenced else value
+    normalized = fenced.group(1).strip() if fenced else value
+    if not normalized.strip():
+        raise InvalidLlmResponseError("LLM 回傳內容無效", value)
+    return normalized
 
 
 __all__ = ["ApiLlmTranslator"]

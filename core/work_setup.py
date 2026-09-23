@@ -10,8 +10,9 @@ from core.config import MissingApiKeyError
 from core.exceptions import WorkSetupCancelled
 from core.models import NovelWork, TranslatedNovelWork
 from core.term_memory import TermMemoryStore
+from core.work_directories import resolve_work_directory
 from core.work_memory import WorkMemory, WorkMemoryStore, text_hash
-from formatters.utils import atomic_write_text, sanitize_filename_component
+from formatters.utils import atomic_write_text
 from translators.work_base import BaseWorkTranslator
 
 ProgressCallback = Callable[[str], None]
@@ -58,7 +59,12 @@ class WorkSetupService:
         if not isinstance(work, NovelWork):
             raise TypeError("work must be a NovelWork")
         self._emit(progress, "checking_directory")
-        work_directory = self._output_directory / sanitize_filename_component(work.title)
+        work_directory = resolve_work_directory(
+            self._output_directory,
+            work_id=work.work_id,
+            source_url=work.source_url,
+            title=work.title,
+        )
         work_directory.mkdir(parents=True, exist_ok=True)
         synopsis_path = work_directory / "synopsis.txt"
 

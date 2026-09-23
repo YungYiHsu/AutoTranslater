@@ -118,6 +118,23 @@ def test_reconcile_treats_one_output_as_partial(tmp_path: Path, txt: bool, html:
     assert progress.next_number == 1
 
 
+def test_reconcile_treats_blank_draft_pair_as_partial(tmp_path: Path) -> None:
+    setup = make_setup(tmp_path)
+    navigation = RecordingNavigationManager()
+    txt_path, html_path = output_paths(setup, 1)
+    txt_path.write_text("blank draft", encoding="utf-8")
+    html_path.write_text(
+        '<meta name="translation-status" content="draft">', encoding="utf-8"
+    )
+
+    progress = ChapterCompletionTracker(navigation_manager=navigation).reconcile(setup)
+
+    assert progress.completed_numbers == set()
+    assert progress.partial_numbers == {1}
+    assert progress.next_number == 1
+    assert navigation.full_refreshes == [{1}]
+
+
 def test_reconcile_supports_non_contiguous_chapters_and_all_complete(tmp_path: Path) -> None:
     setup = make_setup(tmp_path)
     for number in (1, 3, 5):

@@ -56,9 +56,11 @@ class ChapterCompletionTracker:
                 exists = (legacy_txt.exists(), legacy_html.exists())
                 if any(exists):
                     txt_path, html_path = legacy_txt, legacy_html
+            is_blank_draft = all(exists) and self._is_blank_draft(html_path)
             if all(exists):
-                completed.add(chapter.number)
                 output_index[chapter.number] = (txt_path, html_path)
+            if all(exists) and not is_blank_draft:
+                completed.add(chapter.number)
                 if chapter.number not in completions:
                     completions[chapter.number] = ChapterCompletion(
                         source_hash="",
@@ -89,6 +91,15 @@ class ChapterCompletionTracker:
         )
         return progress
 
+    @staticmethod
+    def _is_blank_draft(html_path: Path) -> bool:
+        """Identify the explicit marker used by manually completed blank drafts."""
+        try:
+            html = html_path.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeError):
+            return False
+        return 'name="translation-status" content="draft"' in html
+
     def record_completed(
         self,
         setup: WorkSetupResult,
@@ -96,10 +107,9 @@ class ChapterCompletionTracker:
     ) -> ChapterProgress:
         work = setup.work.source_work
         source = result.chapter.source_chapter
-        number_text = source.source_url.rstrip("/").rsplit("/", 1)[-1]
-        if not number_text.isascii() or not number_text.isdigit():
+        if source.chapter_number is None:
             raise WorkMemoryError("翻譯結果缺少有效的章節數字。")
-        number = int(number_text)
+        number = source.chapter_number
         chapter = work.get_chapter(number)
         txt_path, html_path = self.output_paths(setup, chapter)
         actual_paths = {path.resolve() for path in result.output_paths}
@@ -150,9 +160,7 @@ class ChapterCompletionTracker:
             if chapter.number not in completed
         ]
         all_completed = not unfinished
-        next_number = (
-            setup.work.source_work.chapters[-1].number if all_completed else unfinished[0]
-        )
+        next_number = setup.work.source_work.chapters[-1].number if all_completed else unfinished[0]
         return ChapterProgress(
             completed_numbers=frozenset(completed),
             partial_numbers=frozenset(partial),

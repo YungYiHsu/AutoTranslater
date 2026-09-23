@@ -12,7 +12,7 @@ class GeminiFreeTierQuotaError(NovelTranslatorError):
 
     def __init__(self, retry_after_seconds: int | None = None) -> None:
         self.retry_after_seconds = retry_after_seconds
-        super().__init__("Gemini API 已達免費方案的使用上限，因此目前無法繼續。")
+        super().__init__("額度不足（429）")
 
 
 class ExtractorError(NovelTranslatorError):
@@ -49,6 +49,19 @@ class WorkSetupCancelled(NovelTranslatorError):
 
 class TranslationError(NovelTranslatorError):
     """Raised when a text chunk cannot be translated."""
+
+
+class ApiRequestError(TranslationError, TermMemoryError):
+    """Raised when an API request fails before a usable response is returned."""
+
+
+class InvalidLlmResponseError(TranslationError, TermMemoryError):
+    """Raised when an LLM responds successfully with unusable content."""
+
+    def __init__(self, reason: str, llm_output: str) -> None:
+        self.reason = reason.strip() or "LLM 回傳內容無效"
+        self.llm_output = llm_output
+        super().__init__(self.reason)
 
 
 class TranslationCancelled(NovelTranslatorError):

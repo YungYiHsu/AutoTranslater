@@ -17,10 +17,12 @@ class LocalWorkOption:
     source_url: str
     source_title: str
     translated_title: str
+    site: str = "syosetu"
 
     @property
     def label(self) -> str:
-        return f"{self.translated_title}｜{self.source_title}（{self.ncode.upper()}）"
+        identifier = self.ncode.upper() if self.site == "syosetu" else self.ncode
+        return f"{self.translated_title}｜{self.source_title}（{identifier}）"
 
 
 def discover_local_works(output_directory: Path) -> tuple[LocalWorkOption, ...]:
@@ -40,11 +42,11 @@ def discover_local_works(output_directory: Path) -> tuple[LocalWorkOption, ...]:
             option = _parse_option(payload)
         except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
             continue
-        found.setdefault(option.ncode, option)
+        found.setdefault(f"{option.site}:{option.ncode}", option)
     return tuple(
         sorted(
             found.values(),
-            key=lambda item: (item.translated_title.casefold(), item.ncode),
+            key=lambda item: (item.translated_title.casefold(), item.site, item.ncode),
         )
     )
 
@@ -64,17 +66,19 @@ def _parse_option(payload: Any) -> LocalWorkOption:
         raise ValueError
     normalized_ncode = ncode.strip().lower()
     parsed = urlsplit(source_url.strip())
-    if (
-        parsed.scheme.lower() not in {"http", "https"}
-        or parsed.hostname != "ncode.syosetu.com"
-        or [part.lower() for part in parsed.path.split("/") if part] != [normalized_ncode]
-    ):
+    parts = [part.lower() for part in parsed.path.split("/") if part]
+    if parsed.hostname == "ncode.syosetu.com" and parts == [normalized_ncode]:
+        site = "syosetu"
+    elif parsed.hostname == "kakuyomu.jp" and parts == ["works", normalized_ncode]:
+        site = "kakuyomu"
+    else:
         raise ValueError
     return LocalWorkOption(
         normalized_ncode,
         source_url.strip(),
         source_title.strip(),
         translated_title.strip(),
+        site,
     )
 
 

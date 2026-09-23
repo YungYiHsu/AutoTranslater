@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
 from collections.abc import Iterator
 from re import Pattern
 
@@ -45,6 +46,44 @@ class TextChunker:
         )
         self._verify_result(text, chunks)
         return chunks
+
+    def split_count(self, text: str, count: int) -> tuple[TextChunk, ...]:
+        """Split into exactly count balanced chunks, overriding the character limit."""
+        if type(count) is not int or not 1 <= count <= 20:
+            raise ChunkingError("Chunk 數量必須是 1 到 20 的整數。")
+        if not isinstance(text, str) or not text.strip():
+            raise ChunkingError("原文不可為空白。")
+        # Choose the coarsest natural boundary level that supports the requested count.
+        positions: set[int] = {len(text)}
+        ends: list[int] = []
+        for pattern in (_PARAGRAPH_BOUNDARY, _LINE_BOUNDARY, _SENTENCE_BOUNDARY):
+            positions.update(match.end() for match in pattern.finditer(text))
+            ends = []
+            start = 0
+            for end in sorted(positions):
+                if text[start:end].strip():
+                    ends.append(end)
+                    start = end
+            if ends:
+                ends[-1] = len(text)  # Retain any trailing whitespace.
+            if len(ends) >= count:
+                break
+        if len(ends) < count:
+            raise ChunkingError(f"可合理分段的單位只有 {len(ends)} 個，請減少 Chunk 數量。")
+        chunks: list[TextChunk] = []
+        start = 0
+        first = 0
+        for index in range(count - 1):
+            last = len(ends) - (count - index)
+            target = start + (len(text) - start) / (count - index)
+            insertion = bisect_left(ends, target, first, last + 1)
+            candidates = {max(first, min(last, insertion)), max(first, min(last, insertion - 1))}
+            chosen = min(candidates, key=lambda i: (abs(ends[i] - target), i))
+            end = ends[chosen]
+            chunks.append(TextChunk(index, text[start:end]))
+            start, first = end, chosen + 1
+        chunks.append(TextChunk(count - 1, text[start:]))
+        return tuple(chunks)
 
     def _fit_unit(self, unit: str) -> list[str]:
         if len(unit) <= self._max_chars:

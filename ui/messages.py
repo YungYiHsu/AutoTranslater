@@ -17,6 +17,8 @@ WorkerMessageKind = Literal[
     "prepare_done",
     "progress",
     "run_done",
+    "translation_api_started",
+    "codex_auth_done",
     "term_organization_progress",
     "term_organization_done",
     "term_organization_applied",
