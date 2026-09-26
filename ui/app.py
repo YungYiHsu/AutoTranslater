@@ -73,6 +73,7 @@ from extractors.web_syosetu_work import SyosetuWorkExtractor
 from formatters import HtmlFormatter
 from formatters.utils import TXT_BODY_SEPARATOR, atomic_write_text
 from translators.codex_llm import CodexWorkTranslator
+from translators.codex_session import CodexSession
 from ui.batch_dialog import BatchTranslationDialog
 from ui.epub_dialog import EpubExportDialog
 from ui.messages import WorkerMessage
@@ -396,20 +397,21 @@ class DesktopApp:
         self.codex_usage_text = StringVar(value="尚無本次請求紀錄")
         self.codex_limits_text = StringVar(value="帳號額度：尚未讀取")
         self.codex_context_text = StringVar(value=context_summary(None))
-        self.codex_usage_frame = ttk.LabelFrame(outer, text="Codex 對話與用量", padding=8)
-        ttk.Label(self.codex_usage_frame, textvariable=self.codex_limits_text,
+        self.codex_usage_frame = CollapsibleSection(outer, text="Codex 對話與用量", padding=8)
+        codex_usage_content = self.codex_usage_frame.content
+        ttk.Label(codex_usage_content, textvariable=self.codex_limits_text,
                   wraplength=650, justify="left").pack(anchor="w")
-        ttk.Label(self.codex_usage_frame, textvariable=self.codex_context_text,
+        ttk.Label(codex_usage_content, textvariable=self.codex_context_text,
                   wraplength=650, justify="left").pack(anchor="w", pady=(4, 4))
-        ttk.Label(self.codex_usage_frame, textvariable=self.codex_usage_text,
+        ttk.Label(codex_usage_content, textvariable=self.codex_usage_text,
                   wraplength=650, justify="left").pack(anchor="w")
-        self.codex_compact_button = ttk.Button(self.codex_usage_frame, text="壓縮對話記憶",
+        self.codex_compact_button = ttk.Button(codex_usage_content, text="壓縮對話記憶",
                                                command=lambda: self.codex_maintenance(True))
         self.codex_compact_button.pack(side="left")
-        self.codex_usage_refresh = ttk.Button(self.codex_usage_frame, text="重新整理用量",
+        self.codex_usage_refresh = ttk.Button(codex_usage_content, text="重新整理用量",
                                               command=lambda: self.codex_maintenance(False))
         self.codex_usage_refresh.pack(side="left", padx=8)
-        ttk.Button(self.codex_usage_frame, text="本次逐步用量",
+        ttk.Button(codex_usage_content, text="本次逐步用量",
                    command=self.show_codex_usage).pack(side="left")
 
         chapter_section = CollapsibleSection(outer, text="章節選擇")
@@ -850,9 +852,12 @@ class DesktopApp:
             api_jobs = title_requests + pending_chunks + term_requests
             attempts_per_job = 1 if selected == "codex" else self.config.retry_attempts + 1
             request_limit = api_jobs * attempts_per_job
+            background_requests = (CodexSession(self.work_result.work_directory, self.config.codex_model)
+                                   .background_request_count() if selected == "codex" and api_jobs else 0)
             confirmation = (
                 f"模型：{self.config.codex_model}；推理強度：{self.config.codex_reasoning_effort}\n"
                 f"Codex：標題 {title_requests} 回合、正文 {pending_chunks} 回合。\n"
+                f"作品摘要初始化：{background_requests} 回合；合計 {api_jobs + background_requests} 回合。\n"
                 "沿用本機 ChatGPT 登入及本作品對話，使用你的 Codex 額度。\n\n是否繼續？"
             ) if selected == "codex" else (
                 f"章節名稱：{title_requests} 個 API 工作\n"
@@ -1026,7 +1031,7 @@ class DesktopApp:
                 except ChapterNotFoundError:
                     pass
                 else:
-                    paths = self.chapter_tracker.existing_output_paths(self.work_result, chapter)
+                    paths = self.chapter_tracker.output_paths(self.work_result, chapter)
                     if paths[1].exists():
                         return paths
         if self.result is None:
@@ -1044,9 +1049,8 @@ class DesktopApp:
     def export_epub(self) -> None:
         if self.work_result is None or self.state not in {"work_ready", "chapter_ready"}:
             return
-        raw = self.chapter_number.get().strip()
-        initial = int(raw) if raw.isascii() and raw.isdigit() and len(raw) <= 9 else 1
-        EpubExportDialog(self.root, self.work_result, initial_chapter=initial)
+        EpubExportDialog(self.root, self.work_result,
+                         app_directory=self.app_directory)
 
     def open_batch(self) -> None:
         if self.work_result is None or self.state not in {"work_ready", "chapter_ready"}:
@@ -1107,6 +1111,8 @@ class DesktopApp:
             if self.work_result is not None and entry.get("directory") != str(self.work_result.work_directory.resolve()):
                 continue
             if entry.get("status") == "sending":
+                if entry.get("component") == "work-background":
+                    self.status.set("正在傳送作品摘要……")
                 self._show_codex_limits(entry.get("before"))
                 continue
             self._codex_usage_records = [r for r in self._codex_usage_records if r.get("id") != entry.get("id")]

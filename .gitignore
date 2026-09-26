@@ -16,6 +16,7 @@ wheels/
 
 # Secrets and local configuration
 .env
+/kindle_email.json
 
 # User-editable prompt copies (bundled defaults remain in resources/prompts/)
 /prompts/

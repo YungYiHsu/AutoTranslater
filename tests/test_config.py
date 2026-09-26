@@ -12,7 +12,6 @@ from core.config import (
     AppConfig,
     ConfigurationError,
     MissingApiKeyError,
-    ensure_api_key,
     get_api_key,
     load_config,
     save_api_key,
@@ -76,37 +75,6 @@ def test_get_api_key_uses_selected_provider() -> None:
     config = AppConfig()
 
     assert get_api_key(config, {"GEMINI_API_KEY": "secret"}) == "secret"
-
-
-def test_ensure_api_key_prompts_and_saves_without_echo(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    env_path = tmp_path / ".env"
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-
-    result = ensure_api_key(
-        AppConfig(),
-        env_path=env_path,
-        secret_reader=lambda _prompt: "new-secret",
-    )
-
-    assert result == "new-secret"
-    assert dotenv_values(env_path)["GEMINI_API_KEY"] == "new-secret"
-
-
-def test_ensure_api_key_rejects_blank_input(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-
-    with pytest.raises(MissingApiKeyError):
-        ensure_api_key(
-            AppConfig(),
-            env_path=tmp_path / ".env",
-            secret_reader=lambda _prompt: "",
-        )
 
 
 def test_save_api_key_persists_selected_provider_and_rejects_blank(

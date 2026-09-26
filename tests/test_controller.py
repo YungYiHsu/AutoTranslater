@@ -321,14 +321,11 @@ def test_run_resumes_and_reports_checkpoint_chunks(tmp_path: Path) -> None:
     store = CheckpointStore(tmp_path / "checkpoints")
     first_controller, first_translator, _ = make_controller(tmp_path, store=store)
     plan = first_controller.prepare("https://example.test/1")
-    store.save_chunk(
+    store.save_title(
         plan.checkpoint_job,
-        TranslatedChunk(
-            plan.chunks[0],
-            first_translator.translate(plan.chunks[0]).translated_text,
-            first_translator.translate_title(plan.source_chapter.chapter_title),
-        ),
+        first_translator.translate_title(plan.source_chapter.chapter_title),
     )
+    store.save_chunk(plan.checkpoint_job, first_translator.translate(plan.chunks[0]))
     store.save_chunk(plan.checkpoint_job, first_translator.translate(plan.chunks[1]))
 
     resumed_controller, resumed_translator, _ = make_controller(tmp_path, store=store)
@@ -352,14 +349,11 @@ def test_explicit_retranslation_clears_checkpoint(tmp_path: Path) -> None:
     controller, translator, _ = make_controller(tmp_path, store=store)
     plan = controller.prepare("https://example.test/1")
     first = translator.translate(plan.chunks[0])
-    store.save_chunk(
+    store.save_title(
         plan.checkpoint_job,
-        TranslatedChunk(
-            plan.chunks[0],
-            first.translated_text,
-            translator.translate_title(plan.source_chapter.chapter_title),
-        ),
+        translator.translate_title(plan.source_chapter.chapter_title),
     )
+    store.save_chunk(plan.checkpoint_job, first)
 
     assert len(store.load(plan.checkpoint_job)) == 1
     assert controller.clear_checkpoint(plan) is True

@@ -12,6 +12,7 @@ from core.codex_usage import batch_total_summary, usage_summary
 from core.controller import ChapterExecutionOptions
 from core.exceptions import TranslationCancelled
 from extractors.web_kakuyomu import KakuyomuExtractor
+from translators.codex_session import CodexSession
 from ui.messages import WorkerMessage
 from ui.widgets import ScrollableFrame
 
@@ -172,7 +173,7 @@ class BatchTranslationDialog(Toplevel):
                 messagebox.showinfo("批次翻譯", "範圍內沒有待翻譯章節。", parent=self)
                 return
             existing = [e.number for e in entries if any(
-                p.exists() for p in app.chapter_tracker.existing_output_paths(self.setup, e))]
+                p.exists() for p in app.chapter_tracker.output_paths(self.setup, e))]
             skipped = end - start + 1 - len(entries)
             if not messagebox.askyesno("確認批次翻譯",
                     f"範圍 {end-start+1} 章，跳過 {skipped} 章，處理 {len(entries)} 章。\n"
@@ -254,8 +255,10 @@ class BatchTranslationDialog(Toplevel):
                 self.status.set(self.prefix + "：正在分析……")
             elif kind == "prepared":
                 app.controller, app.plan, limit = value
+                background = (CodexSession(self.setup.work_directory, app.config.codex_model)
+                              .background_request_count() if app.mode.get() == "codex" and limit else 0)
                 self.limit.set(f"本章請求上限：{limit} 次" if app.mode.get() != "codex"
-                               else f"本章 Codex 回合數：{limit}")
+                               else f"本章 Codex 回合數：{limit + background}（摘要初始化 {background} 回合）")
             elif kind == "api_started":
                 app._save_execution_options(value)
             elif kind == "progress":

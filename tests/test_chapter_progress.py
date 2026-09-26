@@ -1,4 +1,4 @@
-"""Compact chapter completion tracking and legacy output reconciliation."""
+"""Compact chapter completion tracking for current-format output files."""
 
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ def make_result(setup: WorkSetupResult, number: int) -> TranslationResult:
     return TranslationResult(chapter, output_paths(setup, number), 0, 1)
 
 
-def test_reconcile_imports_complete_legacy_outputs_once(tmp_path: Path) -> None:
+def test_reconcile_imports_complete_current_outputs_once(tmp_path: Path) -> None:
     setup = make_setup(tmp_path)
     touch_outputs(setup, 1, txt=True, html=True)
     tracker = ChapterCompletionTracker()
@@ -97,14 +97,18 @@ def test_reconcile_imports_complete_legacy_outputs_once(tmp_path: Path) -> None:
     assert setup.memory_path.read_bytes() == first_content
 
 
-def test_reconcile_still_recognizes_previous_filename_order(tmp_path: Path) -> None:
+def test_reconcile_ignores_previous_filename_order_without_changing_files(tmp_path: Path) -> None:
     setup = make_setup(tmp_path)
     (setup.work_directory / "測試作品 - 1.txt").write_text("txt", encoding="utf-8")
     (setup.work_directory / "測試作品 - 1.html").write_text("html", encoding="utf-8")
 
     progress = ChapterCompletionTracker().reconcile(setup)
 
-    assert progress.completed_numbers == {1}
+    assert progress.completed_numbers == set()
+    assert progress.partial_numbers == set()
+    assert progress.next_number == 1
+    assert (setup.work_directory / "測試作品 - 1.txt").read_text(encoding="utf-8") == "txt"
+    assert (setup.work_directory / "測試作品 - 1.html").read_text(encoding="utf-8") == "html"
     assert output_paths(setup, 1)[0].name == "0001 - 測試作品.txt"
 
 

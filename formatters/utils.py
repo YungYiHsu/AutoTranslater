@@ -7,7 +7,6 @@ import re
 import tempfile
 import unicodedata
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from core.models import TranslatedChapter
 
@@ -51,16 +50,6 @@ def build_output_stem(chapter: TranslatedChapter, *, max_length: int = 160) -> s
     )
     stem = f"{chapter_label} - {work_title}"
     return stem[:max_length].rstrip(" .") or "untitled"
-
-
-def extract_chapter_number(source_url: str) -> str | None:
-    """Return the final ASCII-numeric URL path segment without changing its digits."""
-    if not isinstance(source_url, str):
-        raise TypeError("source_url must be a string")
-    segments = [segment for segment in urlsplit(source_url).path.split("/") if segment]
-    if segments and re.fullmatch(r"[0-9]+", segments[-1]):
-        return segments[-1]
-    return None
 
 
 def atomic_write_text(path: Path, content: str, *, encoding: str) -> None:
@@ -109,7 +98,6 @@ __all__ = [
     "TXT_BODY_SEPARATOR",
     "atomic_write_text",
     "build_output_stem",
-    "extract_chapter_number",
     "merge_translated_text",
     "read_translated_text_from_txt",
     "sanitize_filename_component",

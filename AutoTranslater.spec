@@ -43,6 +43,9 @@ analysis = Analysis(
         *google_hiddenimports,
         "bs4.builder._lxml",
         "lxml.etree",
+        # Playwright's upstream hook includes its driver (not a full browser).
+        "playwright.sync_api",
+        "keyring.backends.Windows",
     ],
     hookspath=[],
     hooksconfig={},

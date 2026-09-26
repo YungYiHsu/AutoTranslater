@@ -41,7 +41,6 @@ def translated(job: CheckpointJob, index: int, text: str | None = None) -> Trans
     return TranslatedChunk(
         source_chunk=job.chunks[index],
         translated_text=text or f"翻譯 {index}",
-        translated_chapter_title="中文第一章" if index == 0 else None,
     )
 
 
@@ -194,7 +193,6 @@ def test_title_chunk_and_term_checkpoints_are_independent(tmp_path: Path) -> Non
     assert store.load_title(job) == "中文第一章"
     loaded = store.load(job)
     assert tuple(item.translated_text for item in loaded) == (chunk.translated_text,)
-    assert loaded[0].translated_chapter_title is None
     assert store.term_completed(job, chunk, "terms-v1")
     assert not store.term_completed(job, chunk, "terms-v2")
     assert not store.term_completed(
@@ -214,7 +212,7 @@ def test_load_rejects_malformed_component_without_deleting_it(tmp_path: Path) ->
     assert path.read_text(encoding="utf-8") == "{not-json"
 
 
-def test_legacy_v2_checkpoint_is_migrated(tmp_path: Path) -> None:
+def test_old_checkpoint_is_ignored_and_preserved(tmp_path: Path) -> None:
     store = CheckpointStore(tmp_path)
     job = make_job()
     legacy_path = tmp_path / f"{job.job_id}.json"
@@ -238,10 +236,41 @@ def test_legacy_v2_checkpoint_is_migrated(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    assert store.load_title(job) == "舊標題"
-    assert tuple(item.translated_text for item in store.load(job)) == ("舊譯文",)
-    assert not legacy_path.exists()
-    assert not store.term_completed(job, store.load(job)[0], "terms-v1")
+    original = legacy_path.read_bytes()
+    assert store.load_title(job) is None
+    assert store.load(job) == ()
+    assert not store.term_completed(job, translated(job, 0), "terms-v1")
+    assert not store.path_for(job).exists()
+    assert not store.clear(job)
+    assert not store.clear_components(job, title=True, chunks=True, terms=True)
+    assert legacy_path.read_bytes() == original
+
+    store.save_title(job, "新標題")
+    store.save_chunk(job, translated(job, 0))
+    assert store.load_title(job) == "新標題"
+    assert store.load(job) == (translated(job, 0),)
+    assert store.clear(job)
+    assert legacy_path.read_bytes() == original
+
+
+def test_saving_body_does_not_create_title_checkpoint(tmp_path: Path) -> None:
+    store = CheckpointStore(tmp_path)
+    job = make_job()
+    store.save_chunk(job, translated(job, 0))
+    assert store.load_title(job) is None
+
+
+def test_missing_or_unsupported_metadata_is_not_silently_reused(tmp_path: Path) -> None:
+    store = CheckpointStore(tmp_path)
+    job = make_job()
+    store.path_for(job).mkdir()
+    with pytest.raises(CheckpointError, match="metadata is missing"):
+        store.load(job)
+    state = {"schema_version": 2, "job": job.metadata()}
+    write_state(store, job, state)
+    with pytest.raises(CheckpointError, match="identity"):
+        store.load_title(job)
+    assert read_state(store, job) == state
 
 
 def test_public_methods_reject_wrong_types(tmp_path: Path) -> None:

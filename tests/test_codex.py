@@ -82,6 +82,44 @@ def session(path: Path, client: FakeClient, **kwargs: Any) -> CodexSession:
     return CodexSession(path, "default", client_factory=lambda _path: client, **kwargs)
 
 
+def test_new_chapter_thread_initializes_background_once(tmp_path):
+    (tmp_path / "work.json").write_text(json.dumps({
+        "source": {"title": "日文", "synopsis": "原文摘要"},
+        "translation": {"title": "中文", "synopsis": "舊摘要"}}), encoding="utf-8")
+    (tmp_path / "synopsis.txt").write_text("中文作品名稱：中文\n摘要：\n手動摘要", encoding="utf-8")
+    client = FakeClient()
+    s = session(tmp_path, client)
+    assert s.background_request_count() == 1
+    s.ask("正文", key="c1", component="chunk:1")
+    assert client.sent == 2
+    assert "手動摘要" in client.turns[0]["items"][0]["content"][0]["text"]
+    assert s.background_request_count() == 0
+    s.ask("下章", key="c2", component="chunk:1")
+    assert client.sent == 3
+
+
+def test_metadata_initializes_without_extra_request(tmp_path):
+    client = FakeClient()
+    s = session(tmp_path, client)
+    s.ask("作品名稱與摘要", key="work-metadata")
+    assert s._load()["background_thread_id"] == "work-thread"
+    s.ask("正文", key="c1", component="chunk:1")
+    assert client.sent == 2
+
+
+def test_background_disconnect_recovers_without_resending(tmp_path):
+    (tmp_path / "work.json").write_text(json.dumps({"source": {"synopsis": "摘要"}}), encoding="utf-8")
+    client = FakeClient()
+    client.disconnect = True
+    s = session(tmp_path, client)
+    with pytest.raises(TranslationError):
+        s.ask("正文", key="c1", component="chunk:1")
+    assert client.sent == 1
+    client.disconnect = False
+    s.ask("正文", key="c1", component="chunk:1")
+    assert client.sent == 2
+
+
 def test_resume_per_work_and_pin_default_model(tmp_path: Path) -> None:
     client = FakeClient()
     assert session(tmp_path, client).ask("第一段", key="1") == "翻譯正文。"

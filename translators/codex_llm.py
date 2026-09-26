@@ -55,6 +55,7 @@ class CodexTranslator(BaseTranslator):
             f"目前章節：{self.context}\n{prompt}", key=self.context + component,
             force=self.force,
             component=component,
+            chapter_number=self.chapter_number,
             label=f"第 {self.chapter_number} 章" + ("標題" if component == "title" else "內文"),
             on_request=(lambda: usage.record(self.model)) if usage else None,
         )
@@ -96,6 +97,7 @@ class CodexWorkTranslator(BaseWorkTranslator):
         directory = resolve_work_directory(self.output_directory, work_id=work.work_id,
                                            source_url=work.source_url, title=work.title)
         prompt = compose_work_metadata_prompt(self.prompt, work.title, work.synopsis)
+        prompt = "以下作品名稱與摘要同時作為後續小說翻譯的背景；請依指定格式完成本次翻譯。\n" + prompt
         response = CodexSession(
             directory, self.model, validate_response=ApiWorkTranslator._parse_response,
             reasoning_effort=self.reasoning_effort,

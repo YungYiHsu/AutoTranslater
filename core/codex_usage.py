@@ -2,7 +2,9 @@
 
 import json
 import logging
+import math
 import queue
+import re
 from datetime import UTC, datetime
 
 events = queue.Queue()
@@ -47,93 +49,115 @@ def record(directory, entry):
     events.put(entry)
 
 
-def quota_delta(before, after):
-    """Compare only identical account windows, never infer per-request billing."""
+def quota_comparison(before, after):
+    """Compare UTC snapshot boundaries independently for each account window."""
     def buckets(data):
         if not isinstance(data, dict):
             return {}
         values = data.get("rateLimitsByLimitId") or {"codex": data.get("rateLimits") or {}}
         return values if isinstance(values, dict) else {}
+    def number(value):
+        return type(value) in (int, float) and math.isfinite(value)
+
     result = {}
+    start = (before or {}).get("acquired_at") if isinstance(before, dict) else None
+    end = (after or {}).get("acquired_at") if isinstance(after, dict) else None
     for name, previous in buckets(before).items():
         current = buckets(after).get(name) or {}
         if not isinstance(previous, dict) or not isinstance(current, dict):
             continue
         for window in ("primary", "secondary"):
             left, right = previous.get(window), current.get(window)
-            if not isinstance(left, dict) or not isinstance(right, dict):
+            if not isinstance(left, dict):
                 continue
-            if (left.get("resetsAt") is None or left.get("resetsAt") != right.get("resetsAt")
-                    or left.get("windowDurationMins") != right.get("windowDurationMins")):
-                continue
+            key = f"{name}/{window}"
+            right = right if isinstance(right, dict) else {}
             a, b = left.get("usedPercent"), right.get("usedPercent")
-            if isinstance(a, (int, float)) and isinstance(b, (int, float)) and b >= a:
-                result[f"{name}/{window}"] = b - a
+            reset = left.get("resetsAt")
+            duration = left.get("windowDurationMins")
+            reason = None
+            if not (number(start) and number(end) and 0 < start <= end):
+                reason = "快照取得時間缺失或異常"
+            elif not number(reset):
+                reason = "重置時間缺失"
+            elif start <= reset <= end:
+                reason = "期間發生額度重置"
+            elif reset < start:
+                reason = "開始快照的重置時間已過期"
+            elif type(duration) is not int or duration <= 0 or duration != right.get("windowDurationMins"):
+                reason = "額度窗口缺失或改變"
+            elif not (number(a) and number(b) and 0 <= a <= 100 and 0 <= b <= 100):
+                reason = "額度資料缺失或異常"
+            elif b < a:
+                reason = "剩餘額度增加，無法計算"
+            result[key] = {"delta": None if reason else b - a, "reason": reason}
     return result
 
 
+def quota_delta(before, after):
+    return {key: value["delta"] for key, value in quota_comparison(before, after).items()
+            if value["delta"] is not None}
+
+
+def _batch_rows(records):
+    # Preserve request order while merging start/end events of the same request.
+    rows = {}
+    for index, row in enumerate(records):
+        component = row.get("component", "")
+        if component == "title" or component.startswith("chunk:"):
+            rows[row.get("id") or ("row", index)] = row
+    return [r for r in rows.values() if r.get("status") not in ("sending", "recovered")]
+
+
+def _comparison_text(before, after, divisor=1, *, trim_zeros=False):
+    values = quota_comparison(before, after)
+    parts = []
+    for window, value in values.items():
+        label = window_label(window, {"before": before})
+        if value["delta"] is None:
+            parts.append(f"{label} 無法取得（{value['reason']}）")
+        else:
+            amount = f"{value['delta'] / divisor:.2f}"
+            if trim_zeros:
+                amount = amount.rstrip("0").rstrip(".")
+            parts.append(f"{label} 消耗 {amount} 個百分點")
+    return "、".join(parts) or "無法取得"
+
+
 def batch_total_summary(records):
-    """Sum actual title/body requests; unknown measurements remain explicit."""
-    rows = [r for r in records if r.get("status") != "sending"
-            and (r.get("component") == "title" or r.get("component", "").startswith("chunk:"))]
-    values = [(r.get("tokens") or {}).get("totalTokens") for r in rows]
-    known = [v for v in values if type(v) is int and v >= 0]
-    missing = len(rows) - len(known)
+    """Use first before and last after, never sum rounded per-step deltas."""
+    rows = _batch_rows(records)
     if not rows:
-        return "本次總消耗（標題＋內文）：0 tokens（無實際請求）"
-    total = f"{sum(known):,} tokens" if known else "無法取得"
-    lines = [f"本次總消耗（標題＋內文）：{total}"]
-    if missing:
-        lines.append(f"僅計已知用量；另有 {missing} 次 Token 用量無法取得。")
-    changes = {}
-    for row in rows:
-        for window, delta in (row.get("quota_change") or {}).items():
-            label = window_label(window, row)
-            changes[label] = changes.get(label, 0) + delta
-    if changes:
-        lines.append("帳號額度已知變化合計：" + "、".join(
-            f"{label} 消耗 {delta:g} 個百分點" for label, delta in changes.items()))
-        lines.append("可能包含其他任務；缺失或跨重置的額度變化未計入。")
-    else:
-        lines.append("帳號額度變化合計：無法取得")
+        return "本次總消耗（標題＋內文）：無實際請求"
+    lines = ["本次總消耗（標題＋內文）"]
+    lines.append("帳號額度首尾變化：" + _comparison_text(
+        rows[0].get("before"), rows[-1].get("after"), trim_zeros=True))
+    lines.append("額度為帳號觀測值，可能包含其他任務或回報延遲；無效窗口不計算。")
     return "\n".join(lines)
 
 
 def usage_summary(records, *, average=False):
     finished = [r for r in records if r.get("status") != "sending" and "component" in r]
     if average:
-        lines = []
-        for kind, label in (("title", "標題"), ("chunk:", "內文 chunk")):
-            values = [r["tokens"]["totalTokens"] for r in finished
-                      if r["component"].startswith(kind) and isinstance(r.get("tokens"), dict)
-                      and isinstance(r["tokens"].get("totalTokens"), int)]
-            lines.append(f"{label}平均：{sum(values)/len(values):,.0f} tokens（{len(values)} 次）"
-                         if values else f"{label}平均：無法取得")
-            changes = {}
-            for row in finished:
-                if row["component"].startswith(kind):
-                    for window, delta in (row.get("quota_change") or {}).items():
-                        changes.setdefault(window_label(window, row), []).append(delta)
-            if changes:
-                lines.append("帳號額度變化平均：" + "、".join(
-                    f"{window} 消耗 {sum(items)/len(items):.2f} 個百分點（{len(items)} 次）"
-                    for window, items in changes.items()))
-            else:
-                lines.append("帳號額度變化平均：無法取得")
-        lines.append("額度為帳號觀測值，可能包含其他任務；未知值不計入平均。")
-        return "\n".join(lines)
+        rows = _batch_rows(records)
+        if not rows:
+            return "每章平均消耗：無實際請求"
+        chapters = set()
+        for row in rows:
+            number = row.get("chapter_number")
+            if type(number) is not int or number < 1:
+                # Older records contain the chapter number in the display label.
+                match = re.match(r"^第\s*(\d+)\s*章", row.get("label", ""))
+                number = int(match[1]) if match else None
+            if number is None or number < 1:
+                return "每章平均消耗：無法取得（缺少章節資訊）"
+            chapters.add((row.get("directory", ""), number))
+        return (f"每章平均消耗（共 {len(chapters)} 章，標題＋內文，含失敗請求）\n"
+                "帳號額度變化平均：" + _comparison_text(
+                    rows[0].get("before"), rows[-1].get("after"), len(chapters)))
     lines = []
-    values = []
     for r in finished:
-        total = (r.get("tokens") or {}).get("totalTokens")
-        text = f"{total:,} tokens" if isinstance(total, int) else "用量無法取得"
-        lines.append(f"{r.get('label', r['component'])}：{text}（{r['status']}）")
-        if r.get("quota_change"):
-            lines.append("帳號額度變化：" + "、".join(
-                f"{window_label(window, r)} 消耗 {delta:g} 個百分點"
-                for window, delta in r["quota_change"].items()))
-        if isinstance(total, int):
-            values.append(total)
-    if values:
-        lines.append(f"已知用量合計：{sum(values):,} tokens")
+        lines.append(f"{r.get('label', r['component'])}（{r['status']}）")
+        lines.append("帳號額度變化：" + _comparison_text(
+            r.get("before"), r.get("after"), trim_zeros=True))
     return "\n".join(lines) or "尚無本次請求紀錄"

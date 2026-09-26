@@ -65,25 +65,6 @@ class TermOrganizationPlan:
             if source not in self.organized_terms
         }
 
-    def preview_text(self) -> str:
-        lines = [
-            f"批次：{self.batch_number}/{self.total_batches}",
-            f"整理前：{len(self.original_terms)} 筆",
-            f"整理後：{len(self.organized_terms)} 筆",
-            f"新增：{len(self.added)} 筆　移除：{len(self.removed)} 筆",
-        ]
-        if self.added:
-            lines.extend(("", "【將新增】"))
-            lines.extend(f"{source} → {translation}" for source, translation in self.added.items())
-        if self.removed:
-            lines.extend(("", "【將移除】"))
-            lines.extend(
-                f"{source} → {translation}" for source, translation in self.removed.items()
-            )
-        if self.rejected_proposals:
-            lines.extend(("", f"已忽略不安全或衝突的建議：{self.rejected_proposals} 筆"))
-        return "\n".join(lines)
-
     def select_changes(
         self,
         *,
@@ -135,9 +116,6 @@ class TermOrganizationService:
             raise TypeError("organizer must implement BaseTermOrganizer")
         self._organizer = organizer
         self._store = store or TermMemoryStore()
-
-    def estimate_requests(self, work_directory: Path) -> int:
-        return len(self.prepare_batches(work_directory))
 
     def prepare_batches(
         self,

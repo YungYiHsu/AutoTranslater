@@ -14,7 +14,6 @@ from uuid import NAMESPACE_URL, uuid5
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 from core.chapter_progress import ChapterCompletionTracker
-from core.models import NovelChapterEntry
 from core.work_setup import WorkSetupResult
 from formatters.utils import TXT_BODY_SEPARATOR, sanitize_filename_component
 
@@ -31,24 +30,15 @@ class EpubChapter:
     work_title: str
 
 
-def chapter_txt_path(setup: WorkSetupResult, entry: NovelChapterEntry) -> Path:
-    current = ChapterCompletionTracker.output_paths(setup, entry)[0]
-    if current.is_file():
-        return current
-    title = sanitize_filename_component(setup.work.source_work.title, max_length=80)
-    legacy = setup.work_directory / f"{title} - {entry.number}.txt"
-    return legacy if legacy.is_file() else current
-
-
 def epub_destination(setup: WorkSetupResult, start: int, end: int) -> Path:
     title = sanitize_filename_component(setup.work.translated_title, max_length=60)
     return setup.work_directory / f"{start:04d}-{end:04d} - {title}.epub"
 
 
 def local_chapter_numbers(setup: WorkSetupResult) -> tuple[int, ...]:
-    """Find local chapter TXT files, including legacy filenames, without reading bodies."""
+    """Find current-format local chapter TXT files without reading bodies."""
     return tuple(sorted(entry.number for entry in setup.work.source_work.chapters
-                        if chapter_txt_path(setup, entry).is_file()))
+                        if ChapterCompletionTracker.output_paths(setup, entry)[0].is_file()))
 
 
 def _read_chapter(path: Path, number: int) -> EpubChapter:
@@ -80,7 +70,8 @@ def load_epub_chapters(setup: WorkSetupResult, start: int, end: int) -> tuple[Ep
             problems.append(f"第 {number} 章：作品目錄中不存在")
         else:
             try:
-                chapters.append(_read_chapter(chapter_txt_path(setup, entries[number]), number))
+                txt_path = ChapterCompletionTracker.output_paths(setup, entries[number])[0]
+                chapters.append(_read_chapter(txt_path, number))
             except (OSError, UnicodeError, ValueError) as exc:
                 detail = "缺少本地 TXT" if isinstance(exc, FileNotFoundError) else str(exc)
                 problems.append(f"第 {number} 章：{detail}")

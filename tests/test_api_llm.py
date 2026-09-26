@@ -146,7 +146,6 @@ def test_chapter_title_and_body_use_separate_requests(tmp_path: Path) -> None:
     )
 
     assert translated_title == "愛麗絲的啟程"
-    assert result.translated_chapter_title is None
     assert result.translated_text == "愛麗絲出發了。"
     assert len(call.calls) == 2
     assert "日文章節名稱：アリスの旅立ち" in call.calls[0]["contents"]

@@ -51,11 +51,6 @@ class ChapterCompletionTracker:
         for chapter in work.chapters:
             txt_path, html_path = self.output_paths(setup, chapter)
             exists = (txt_path.exists(), html_path.exists())
-            if not any(exists):
-                legacy_txt, legacy_html = self._legacy_output_paths(setup, chapter)
-                exists = (legacy_txt.exists(), legacy_html.exists())
-                if any(exists):
-                    txt_path, html_path = legacy_txt, legacy_html
             is_blank_draft = all(exists) and self._is_blank_draft(html_path)
             if all(exists):
                 output_index[chapter.number] = (txt_path, html_path)
@@ -181,32 +176,6 @@ class ChapterCompletionTracker:
             max_length=80,
         )
         stem = f"{chapter.number:04d} - {safe_title}"
-        return (
-            setup.work_directory / f"{stem}.txt",
-            setup.work_directory / f"{stem}.html",
-        )
-
-    @classmethod
-    def existing_output_paths(
-        cls, setup: WorkSetupResult, chapter: NovelChapterEntry
-    ) -> tuple[Path, Path]:
-        """Return current paths, or a previous-format pair when only that pair exists."""
-        current = cls.output_paths(setup, chapter)
-        legacy = cls._legacy_output_paths(setup, chapter)
-        if current[1].exists():
-            return current
-        if legacy[1].exists():
-            return legacy
-        if any(path.exists() for path in current):
-            return current
-        return legacy if any(path.exists() for path in legacy) else current
-
-    @staticmethod
-    def _legacy_output_paths(
-        setup: WorkSetupResult, chapter: NovelChapterEntry
-    ) -> tuple[Path, Path]:
-        safe_title = sanitize_filename_component(setup.work.source_work.title, max_length=80)
-        stem = f"{safe_title} - {chapter.number}"
         return (
             setup.work_directory / f"{stem}.txt",
             setup.work_directory / f"{stem}.html",

@@ -52,7 +52,7 @@ class CodexClient:
         )
         threading.Thread(target=self._read, daemon=True).start()
         try:
-            self.call("initialize", {"clientInfo": {"name": "autotranslater", "version": "0.2.0"}})
+            self.call("initialize", {"clientInfo": {"name": "autotranslater", "version": "0.4.0"}})
             self._send({"method": "initialized"})
         except Exception:
             self.close()
@@ -104,7 +104,9 @@ class CodexClient:
         params = message.get("params", {})
         if message.get("method") == "thread/tokenUsage/updated":
             key = (params.get("threadId"), params.get("turnId"))
-            self.token_events.setdefault(key, []).append(params.get("tokenUsage", {}))
+            usage = params.get("tokenUsage") or {}
+            self.token_events[key] = [{"last": {"inputTokens": (usage.get("last") or {}).get("inputTokens")},
+                                       "modelContextWindow": usage.get("modelContextWindow")}]
         elif message.get("method") == "account/rateLimits/updated":
             self.latest_limits = params
         if "method" in message and "id" in message:
@@ -137,6 +139,8 @@ class CodexClient:
     def read_limits(self):
         try:
             self.latest_limits = self.call("account/rateLimits/read", timeout=3)
+            if isinstance(self.latest_limits, dict):
+                self.latest_limits = {**self.latest_limits, "acquired_at": time.time()}
             return self.latest_limits
         except TranslationError:
             return None
@@ -151,23 +155,6 @@ class CodexClient:
         if type(used) is not int or used < 0 or type(capacity) is not int or capacity <= 0:
             return None
         return {"input_tokens": used, "capacity": capacity}
-
-    def turn_usage(self, thread_id, turn_id):
-        updates = self.token_events.get((thread_id, turn_id), [])
-        if not updates:
-            return None
-        first, final = updates[0], updates[-1]
-        initial, last = first.get("total", {}), first.get("last", {})
-        end = final.get("total", {})
-        result = {}
-        for key in ("totalTokens", "inputTokens", "cachedInputTokens", "outputTokens",
-                    "reasoningOutputTokens", "cacheWriteInputTokens"):
-            if all(type(d.get(key)) is int for d in (initial, last, end)):
-                delta = end[key] - initial[key] + last[key]
-                if delta < 0 or end[key] < initial[key]:
-                    return None
-                result[key] = delta
-        return result if "totalTokens" in result else None
 
     def wait_compaction(self, thread_id):
         deadline = time.monotonic() + self.timeout

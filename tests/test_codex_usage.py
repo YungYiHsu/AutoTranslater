@@ -30,10 +30,10 @@ def test_batch_total_includes_title_body_and_failed_known_usage():
         ("title", "sending", None),
     ]]
     result = batch_total_summary(rows)
-    assert "45 tokens" in result
-    assert "1 次 Token 用量無法取得" in result
+    assert "tokens" not in result.lower()
+    assert "tokens" not in usage_summary(rows).lower()
     assert "無法取得" in batch_total_summary(rows[3:4])
-    assert "0 tokens（無實際請求）" in batch_total_summary([])
+    assert "無實際請求" in batch_total_summary([])
 
 
 def test_context_estimate_uses_latest_input_not_cumulative():
@@ -61,33 +61,87 @@ def test_duration_labels(minutes, expected):
 
 
 def test_window_labels_follow_recorded_duration():
-    rows = [{"component": "title", "status": "completed", "tokens": None,
+    rows = [{"component": "title", "status": "completed", "tokens": None, "chapter_number": 1,
              "before": {"rateLimits": {"primary": {"windowDurationMins": duration}}},
              "quota_change": {"codex/primary": 1}} for duration in (180, 300)]
     result = usage_summary(rows, average=True)
-    assert "codex/3 小時" in result and "codex/5 小時" in result
+    assert "codex/3 小時" in result and "無法取得" in result
     assert "codex/3 小時" in usage_summary(rows[:1])
     assert window_label("codex/secondary") == "codex/時間未知"
 
 
 def test_usage_aggregates_without_duplicate_updates():
     client = object.__new__(CodexClient)
-    first = {"total": {"totalTokens": 110}, "last": {"totalTokens": 10}}
-    last = {"total": {"totalTokens": 130}, "last": {"totalTokens": 20}}
-    client.token_events = {("t", "r"): [first, first, last, last]}
-    assert client.turn_usage("t", "r") == {"totalTokens": 30}
-    assert client.turn_usage("t", "other") is None
-    client.token_events[("t", "r")].append({"total": {"totalTokens": 50}})
-    assert client.turn_usage("t", "r") is None
+    assert not hasattr(client, "turn_usage")
 
 
 def test_quota_reset_and_unknown():
-    before = {"rateLimits": {"primary": {"usedPercent": 10, "resetsAt": 100, "windowDurationMins": 300}}}
-    after = {"rateLimits": {"primary": {"usedPercent": 12, "resetsAt": 100, "windowDurationMins": 300}}}
+    before = snapshot(10, 10)
+    after = snapshot(12, 20)
     assert quota_delta(before, after) == {"codex/primary": 2}
     after["rateLimits"]["primary"]["resetsAt"] = 200
+    assert quota_delta(before, after) == {"codex/primary": 2}
+    after["acquired_at"] = 100
     assert quota_delta(before, after) == {}
     assert quota_delta(None, None) == {}
+
+
+def snapshot(used, acquired, reset=100, duration=300):
+    return {"acquired_at": acquired, "rateLimits": {"primary": {
+        "usedPercent": used, "resetsAt": reset, "windowDurationMins": duration}}}
+
+
+@pytest.mark.parametrize("start,end,reset,valid", [
+    (10, 20, 10, False), (10, 20, 20, False), (10, 20, 15, False),
+    (10, 20, 21, True), (10, 20, 9, False), (20, 10, 100, False),
+    (None, 20, 100, False), (10, None, 100, False),
+])
+def test_reset_snapshot_boundaries(start, end, reset, valid):
+    assert bool(quota_delta(snapshot(10, start, reset), snapshot(12, end))) is valid
+
+
+def test_batch_uses_endpoints_and_all_actual_requests():
+    rows = [
+        {"id": "a", "component": "title", "status": "sending"},
+        {"id": "a", "component": "title", "status": "completed", "chapter_number": 1,
+         "before": snapshot(10, 10), "after": snapshot(11, 20)},
+        {"id": "b", "component": "chunk:1", "status": "failed", "chapter_number": 1,
+         "before": None, "after": None},
+        {"id": "c", "component": "chunk:2", "status": "completed", "chapter_number": 2,
+         "before": snapshot(15, 30), "after": snapshot(16, 40)},
+        {"id": "d", "component": "work-background", "status": "completed",
+         "before": snapshot(1, 1), "after": snapshot(99, 99)},
+    ]
+    assert "6 個百分點" in batch_total_summary(rows)
+    average = usage_summary(rows, average=True)
+    assert "共 2 章" in average and "3.00 個百分點" in average
+    rows[1]["before"] = None
+    assert "無法取得" in batch_total_summary(rows)
+
+
+def test_windows_reset_independently():
+    before, after = snapshot(10, 10, 15), snapshot(12, 20)
+    for data, used in ((before, 30), (after, 33)):
+        data["rateLimits"]["secondary"] = {
+            "usedPercent": used, "resetsAt": 1000, "windowDurationMins": 10080}
+    assert quota_delta(before, after) == {"codex/secondary": 3}
+    text = usage_summary([{"component": "title", "status": "completed",
+                           "before": before, "after": after}])
+    assert "期間發生額度重置" in text and "7 天 消耗 3 個百分點" in text
+
+
+@pytest.mark.parametrize("used", [9, -1, 101, float("nan"), True, None])
+def test_invalid_or_increased_remaining(used):
+    assert quota_delta(snapshot(10, 10), snapshot(used, 20)) == {}
+
+
+def test_read_limits_captures_acquisition_time(monkeypatch):
+    client = object.__new__(CodexClient)
+    response = {"rateLimits": {}}
+    client.call = lambda *args, **kwargs: response
+    monkeypatch.setattr("translators.codex_client.time.time", lambda: 1234.5)
+    assert client.read_limits()["acquired_at"] == 1234.5
+    assert "acquired_at" not in response
 
 
 def test_average_excludes_unknown_and_compaction():
@@ -96,20 +150,33 @@ def test_average_excludes_unknown_and_compaction():
                {"component": "title", "status": "failed", "tokens": None},
                {"component": "compaction", "status": "completed", "tokens": {"totalTokens": 999}}]
     result = usage_summary(records, average=True)
-    assert "15 tokens（2 次）" in result
-    assert "內文 chunk平均：無法取得" in result
+    assert "tokens" not in result.lower()
+    assert "每章平均消耗：無法取得" in result
 
 
 def test_journal_only_actual_requests(tmp_path):
     client = FakeClient()
     s = session(tmp_path, client)
-    s.ask("text", key="1", component="title", label="第1章 標題")
+    s.ask("text", key="1", component="title", label="第1章 標題", chapter_number=1)
     s.ask("text", key="1", component="title", label="第1章 標題")
     rows = [json.loads(line) for line in (tmp_path / "codex_usage.jsonl").read_text(encoding="utf-8").splitlines()]
     assert len(rows) == 2
     assert rows[0]["id"] == rows[1]["id"]
-    assert rows[1]["tokens"] is None
+    assert "tokens" not in rows[1]
     assert rows[1]["status"] == "completed"
+    assert rows[1]["chapter_number"] == 1
+
+
+def test_per_chapter_average_merges_title_chunks_and_legacy_labels():
+    rows = [{"id": str(i), "component": component, "status": "completed",
+             "label": "第 12 章內文", "before": snapshot(10 + i, 10 + i),
+             "after": snapshot(11 + i, 11 + i)}
+            for i, component in enumerate(("title", "chunk:1", "chunk:2", "chunk:3"))]
+    result = usage_summary(rows, average=True)
+    assert "共 1 章" in result and "4.00 個百分點" in result
+    rows.append({"component": "chunk:1", "status": "recovered", "chapter_number": 99})
+    assert usage_summary(rows, average=True) == result
+    assert "無實際請求" in usage_summary([], average=True)
 
 
 def test_journal_failure_does_not_raise(tmp_path):

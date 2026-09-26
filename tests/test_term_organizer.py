@@ -275,6 +275,5 @@ def test_less_than_two_terms_creates_no_batches(
     write_terms(tmp_path, terms)
     organizer = FakeOrganizer([])
     service = TermOrganizationService(organizer)
-    assert service.estimate_requests(tmp_path) == 0
     assert service.prepare_batches(tmp_path) == ()
     assert organizer.calls == []

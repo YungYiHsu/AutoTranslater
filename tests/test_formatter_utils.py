@@ -9,7 +9,6 @@ import pytest
 from formatters.utils import (
     atomic_write_text,
     build_output_stem,
-    extract_chapter_number,
     merge_translated_text,
     sanitize_filename_component,
 )
@@ -57,22 +56,6 @@ def test_build_output_stem_falls_back_when_url_has_no_chapter_number() -> None:
         chapter_title="第一/章",
     )
     assert build_output_stem(chapter) == "第一_章 - 測試小說"
-
-
-@pytest.mark.parametrize(
-    ("url", "expected"),
-    [
-        ("https://ncode.syosetu.com/n1234ab/12/", "12"),
-        ("https://ncode.syosetu.com/n1234ab/001?view=1", "001"),
-        ("https://ncode.syosetu.com/n1234ab/", None),
-        ("https://example.test/chapter/１２/", None),
-    ],
-)
-def test_extract_chapter_number_uses_exact_final_ascii_digits(
-    url: str,
-    expected: str | None,
-) -> None:
-    assert extract_chapter_number(url) == expected
 
 
 def test_atomic_write_text_creates_parent_and_leaves_no_temp_file(tmp_path: Path) -> None:

@@ -120,12 +120,17 @@ def test_overwrite_and_updated_text(setup):
         assert "EPUB/chapter-1.xhtml" not in book.namelist()
 
 
-def test_legacy_txt_without_html(setup):
+def test_old_filename_is_not_used_as_epub_input(setup):
     entry = setup.work.source_work.chapters[0]
     current, html = ChapterCompletionTracker.output_paths(setup, entry)
-    current.rename(current.parent / f"{setup.work.source_work.title} - 1.txt")
+    old_path = current.parent / f"{setup.work.source_work.title} - 1.txt"
+    current.rename(old_path)
+    original = old_path.read_bytes()
     html.write_text("HTML 不應作為正文來源", encoding="utf-8")
-    assert export_epub(setup, 1, 1).exists()
+    assert local_chapter_numbers(setup) == (2, 3)
+    with pytest.raises(ValueError, match="缺少本地 TXT"):
+        export_epub(setup, 1, 1)
+    assert old_path.read_bytes() == original
 
 
 def test_kakuyomu_display_numbers(setup):

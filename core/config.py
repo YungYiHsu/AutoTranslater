@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import getpass
 import json
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -179,27 +178,6 @@ def get_api_key(config: AppConfig, environment: Mapping[str, str] | None = None)
     source = environment if environment is not None else os.environ
     value = source.get(API_KEY_NAME, "").strip()
     return value or None
-
-
-def ensure_api_key(
-    config: AppConfig,
-    *,
-    env_path: Path | None = None,
-    secret_reader: Callable[[str], str] = getpass.getpass,
-) -> str:
-    """Return an API key, securely prompting and persisting it when absent."""
-    path = load_environment(env_path)
-    existing = get_api_key(config)
-    if existing:
-        return existing
-
-    entered = secret_reader(f"Enter {API_KEY_NAME} (input hidden): ").strip()
-    if not entered:
-        raise MissingApiKeyError(
-            f"{API_KEY_NAME} is required. Add it to {path.name} and run the program again."
-        )
-
-    return save_api_key(config, entered, env_path=path)
 
 
 def save_api_key(
