@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from core.models import NovelWork, TranslatedNovelWork
+from core.shared.models import NovelWork, TranslatedNovelWork
 
 
 class BaseWorkTranslator(ABC):

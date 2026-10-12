@@ -11,14 +11,17 @@ from typing import Any
 
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from core.api_usage import DailyApiUsage
-from core.config import AppConfig
-from core.exceptions import TranslationError
-from core.gemini_settings import request_config
-from core.models import NovelWork, TranslatedNovelWork
-from core.paths import get_resource_path
-from core.prompt_composer import compose_work_metadata_prompt, validate_work_metadata_template
-from core.prompt_contracts import WORK_METADATA_OUTPUT_CONTRACT, append_prompt_contract
+from core.shared.api_usage import DailyApiUsage
+from core.shared.config import AppConfig
+from core.shared.exceptions import TranslationError
+from core.shared.gemini_settings import request_config
+from core.shared.models import NovelWork, TranslatedNovelWork
+from core.shared.paths import get_resource_path
+from core.shared.prompt_composer import (
+    compose_work_metadata_prompt,
+    validate_work_metadata_template,
+)
+from core.shared.prompt_contracts import WORK_METADATA_OUTPUT_CONTRACT, append_prompt_contract
 from translators.api_errors import invalid_response, request_error, response_text
 from translators.gemini_errors import raise_if_free_tier_quota
 from translators.work_base import BaseWorkTranslator

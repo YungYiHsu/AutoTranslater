@@ -11,15 +11,15 @@ from urllib.parse import urlsplit, urlunsplit
 import requests
 from bs4 import BeautifulSoup
 
-from core.chapter_catalog import ChapterCatalog, ChapterCatalogStore
-from core.exceptions import (
+from core.shared.exceptions import (
     ChapterNotFoundError,
     ExtractorError,
     UnsupportedUrlError,
     WorkNotFoundError,
 )
-from core.models import NovelChapterEntry, NovelWork
-from core.work_directories import resolve_work_directory
+from core.shared.models import NovelChapterEntry, NovelWork
+from core.shared.work_directories import resolve_work_directory
+from core.webnovel.chapter_catalog import ChapterCatalog, ChapterCatalogStore
 from extractors.work_base import BaseWorkExtractor, CatalogProgress
 
 _HOST = "kakuyomu.jp"

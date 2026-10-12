@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Any, Self
 
-from core.exceptions import TranslationError
+from core.shared.exceptions import TranslationError
 
 
 def find_codex() -> str:
@@ -205,10 +205,22 @@ class CodexClient:
                 raise TranslationError("Codex 模型清單分頁異常，請重新整理。")
             seen.add(cursor)
 
-    def wait_turn(self, thread_id: str, turn_id: str) -> dict[str, Any]:
+    def wait_turn(self, thread_id: str, turn_id: str, *, cancel=None) -> dict[str, Any]:
         deadline = time.monotonic() + self.timeout
+        interrupted = False
         while True:
-            message = self.events.pop(0) if self.events else self._next(deadline)
+            if cancel is not None and cancel.is_set() and not interrupted:
+                self.call("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
+                interrupted = True
+                deadline = min(deadline, time.monotonic() + 30)
+            try:
+                message = self.events.pop(0) if self.events else self._next(
+                    min(deadline, time.monotonic() + .25) if cancel is not None else deadline
+                )
+            except TranslationError as exc:
+                if cancel is not None and isinstance(exc.__cause__, queue.Empty) and time.monotonic() < deadline:
+                    continue
+                raise
             params = message.get("params", {})
             if (message.get("method") == "turn/completed"
                     and params.get("threadId") == thread_id

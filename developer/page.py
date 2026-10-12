@@ -3,10 +3,25 @@
 from collections.abc import Callable
 from tkinter import StringVar, messagebox, ttk
 
+from developer.reading_page import ReadingLinesPage
 from developer.settings import CATEGORIES, THRESHOLDS, get_overrides, set_overrides
 
 
 class DeveloperPage(ttk.Frame):
+    def __init__(self, parent: ttk.Notebook, *, is_busy: Callable[[], bool]) -> None:
+        super().__init__(parent)
+        self.tabs = ttk.Notebook(self)
+        self.tabs.pack(fill="both", expand=True)
+        self.safety_page = SafetySettingsPage(self.tabs, is_busy=is_busy)
+        self.reading_page = ReadingLinesPage(self.tabs)
+        self.tabs.add(self.safety_page, text="Gemini 安全設定")
+        self.tabs.add(self.reading_page, text="閱讀分行測試")
+
+    def set_busy(self, busy: bool) -> None:
+        self.safety_page.set_busy(busy)
+
+
+class SafetySettingsPage(ttk.Frame):
     def __init__(self, parent: ttk.Notebook, *, is_busy: Callable[[], bool]) -> None:
         super().__init__(parent, padding=20)
         self._is_busy = is_busy

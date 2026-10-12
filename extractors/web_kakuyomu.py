@@ -8,8 +8,8 @@ from urllib.parse import urlsplit, urlunsplit
 import requests
 from bs4 import BeautifulSoup, Tag
 
-from core.exceptions import ChapterNotFoundError, ExtractorError, UnsupportedUrlError
-from core.models import NovelChapter
+from core.shared.exceptions import ChapterNotFoundError, ExtractorError, UnsupportedUrlError
+from core.shared.models import NovelChapter
 from extractors.base import BaseExtractor
 
 _HOST = "kakuyomu.jp"

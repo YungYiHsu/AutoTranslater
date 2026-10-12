@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import re
-import tempfile
 import unicodedata
 from pathlib import Path
 
-from core.models import TranslatedChapter
+from core.shared.models import TranslatedChapter
+from core.shared.storage import atomic_text
 
 _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED_WINDOWS_NAME = re.compile(
@@ -54,27 +53,7 @@ def build_output_stem(chapter: TranslatedChapter, *, max_length: int = 160) -> s
 
 def atomic_write_text(path: Path, content: str, *, encoding: str) -> None:
     """Write text through a temporary file in the destination directory."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding=encoding,
-            newline="",
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            dir=path.parent,
-            delete=False,
-        ) as temporary:
-            temporary.write(content)
-            temporary.flush()
-            os.fsync(temporary.fileno())
-            temporary_path = Path(temporary.name)
-        temporary_path.replace(path)
-    except Exception:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
-        raise
+    atomic_text(path, content, encoding=encoding)
 
 
 def merge_translated_text(chapter: TranslatedChapter) -> str:

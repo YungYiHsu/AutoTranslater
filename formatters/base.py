@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from core.models import TranslatedChapter
+from core.shared.models import TranslatedChapter
 
 
 class BaseFormatter(ABC):

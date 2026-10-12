@@ -6,12 +6,12 @@ import hashlib
 from collections.abc import Mapping
 from pathlib import Path
 
-from core.api_usage import DailyApiUsage
-from core.models import NovelWork, TextChunk, TranslatedChunk, TranslatedNovelWork
-from core.paths import get_resource_path
-from core.prompt_composer import compose_translation_prompt, compose_work_metadata_prompt
-from core.prompt_contracts import CHAPTER_OUTPUT_CONTRACT
-from core.work_directories import resolve_work_directory
+from core.shared.api_usage import DailyApiUsage
+from core.shared.models import NovelWork, TextChunk, TranslatedChunk, TranslatedNovelWork
+from core.shared.paths import get_resource_path
+from core.shared.prompt_composer import compose_translation_prompt, compose_work_metadata_prompt
+from core.shared.prompt_contracts import CHAPTER_OUTPUT_CONTRACT
+from core.shared.work_directories import resolve_work_directory
 from translators.api_llm import _TITLE_INSTRUCTIONS, _normalize_response
 from translators.api_work import ApiWorkTranslator
 from translators.base import BaseTranslator

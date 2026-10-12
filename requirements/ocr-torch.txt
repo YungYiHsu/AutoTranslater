@@ -1,0 +1,4 @@
+# CPU wheels for the separate Windows/Python 3.12 OCR environment.
+--index-url https://download.pytorch.org/whl/cpu
+torch==2.14.0+cpu
+torchvision==0.29.0+cpu

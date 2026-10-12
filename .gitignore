@@ -38,3 +38,9 @@ checkpoints/*
 # Logs
 logs/
 *.log
+
+# Private OCR samples and derived results
+/.local-ocr/
+/runtime/
+/cache/
+/private-tests/

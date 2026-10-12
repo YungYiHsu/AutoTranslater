@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 
-from core.models import TextChunk, TranslatedChunk
+from core.shared.models import TextChunk, TranslatedChunk
 
 
 class BaseTranslator(ABC):

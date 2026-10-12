@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.models import NovelChapter, TextChunk, TranslatedChapter, TranslatedChunk
+from core.shared.models import NovelChapter, TextChunk, TranslatedChapter, TranslatedChunk
 
 
 def make_translated_chapter(

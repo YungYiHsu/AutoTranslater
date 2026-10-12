@@ -11,9 +11,9 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, TemplateError, select_autoescape
 
-from core.exceptions import FormatterError
-from core.models import TranslatedChapter
-from core.paths import get_resource_path
+from core.shared.exceptions import FormatterError
+from core.shared.models import TranslatedChapter
+from core.shared.paths import get_resource_path
 from formatters.base import BaseFormatter
 from formatters.html_navigation import preserve_navigation_block
 from formatters.utils import (

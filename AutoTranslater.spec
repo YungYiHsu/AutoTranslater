@@ -35,6 +35,9 @@ analysis = Analysis(
     pathex=[str(project_root)],
     binaries=[],
     datas=[
+        (str(project_root / "core/ebook/ocr/recognizer_process.py"), "core/ebook/ocr"),
+        (str(project_root / "core/ebook/ocr/session.py"), "core/ebook/ocr"),
+        (str(project_root / "core/shared/storage.py"), "core/shared"),
         (str(project_root / "resources"), "resources"),
         *google_datas,
         *collect_data_files("tzdata"),

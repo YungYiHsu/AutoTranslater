@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.exceptions import ApiRequestError, GeminiFreeTierQuotaError, InvalidLlmResponseError
+from core.shared.exceptions import (
+    ApiRequestError,
+    GeminiFreeTierQuotaError,
+    InvalidLlmResponseError,
+)
 
 
 def request_error(exc: Exception) -> ApiRequestError | GeminiFreeTierQuotaError:

@@ -10,8 +10,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from core.codex_usage import quota_delta, record
-from core.exceptions import TranslationError
+from core.shared.codex_usage import quota_delta, record
+from core.shared.exceptions import TranslationError
 from formatters.utils import atomic_write_text
 from translators.api_errors import invalid_response
 from translators.codex_client import CodexClient
@@ -238,6 +238,7 @@ class CodexSession:
                 turn_params["effort"] = effort
             before = client.read_limits() if hasattr(client, "read_limits") else None
             entry = {"id": marker, "thread_id": thread_id, "model": self.model,
+                     "effort": effort,
                      "component": self.usage_component, "label": self.usage_label,
                      "chapter_number": self.usage_chapter_number,
                      "before": before, "status": "sending"}

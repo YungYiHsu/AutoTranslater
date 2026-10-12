@@ -1,0 +1,5 @@
+# Install ocr-torch.txt first. Versions verified in the existing OCR environment.
+yomitoku==0.15.0
+pillow==12.3.0
+numpy==2.5.2
+opencv-python==5.0.0.93

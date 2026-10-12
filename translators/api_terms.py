@@ -12,13 +12,13 @@ from typing import Any
 
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from core.api_usage import DailyApiUsage
-from core.config import AppConfig
-from core.exceptions import TermMemoryError
-from core.gemini_settings import request_config
-from core.models import TranslatedChapter
-from core.paths import get_resource_path
-from core.prompt_composer import format_term_pairs
+from core.shared.api_usage import DailyApiUsage
+from core.shared.config import AppConfig
+from core.shared.exceptions import TermMemoryError
+from core.shared.gemini_settings import request_config
+from core.shared.models import TranslatedChapter
+from core.shared.paths import get_resource_path
+from core.shared.prompt_composer import format_term_pairs
 from translators.api_errors import invalid_response, request_error, response_text
 from translators.gemini_errors import raise_if_free_tier_quota
 from translators.term_base import BaseTermAnalyzer

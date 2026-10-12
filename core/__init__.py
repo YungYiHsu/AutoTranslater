@@ -1,6 +1,6 @@
 """核心調度與文本處理模組。"""
 
-from core.models import (
+from core.shared.models import (
     NovelChapter,
     NovelChapterEntry,
     NovelWork,
@@ -9,7 +9,7 @@ from core.models import (
     TranslatedChunk,
     TranslatedNovelWork,
 )
-from core.text_chunker import TextChunker
+from core.shared.text_chunker import TextChunker
 
 __all__ = [
     "NovelChapter",

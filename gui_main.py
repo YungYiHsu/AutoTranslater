@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from tkinter import Tk, messagebox
 
-from core.logging_config import setup_logging
-from core.paths import get_app_dir
+from core.shared.logging_config import setup_logging
+from core.shared.paths import get_app_dir
 from ui.app import DesktopApp
 
 

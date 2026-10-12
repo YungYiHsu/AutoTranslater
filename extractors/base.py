@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from core.models import NovelChapter
+from core.shared.models import NovelChapter
 
 
 class BaseExtractor(ABC):

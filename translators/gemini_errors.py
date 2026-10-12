@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import re
 
-from core.exceptions import GeminiFreeTierQuotaError
+from core.shared.exceptions import GeminiFreeTierQuotaError
 
 _FREE_TIER_MARKERS = (
     "free_tier",

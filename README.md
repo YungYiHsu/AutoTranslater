@@ -1,8 +1,34 @@
 # 日文小說繁體中文翻譯器
 
-以 Python 與 Tkinter 製作的 Windows GUI 工具，從日文小說網站讀取章節，透過 Gemini API 或本機 Codex 翻譯為繁體中文，並輸出可編輯的 TXT 與適合閱讀的 HTML。目前支援「成為小說家吧」與 Kakuyomu。
+以 Python 與 Tkinter 製作的 Windows GUI 工具，提供並列的網路小說與電子書流程，將日文小說翻譯為繁體中文，並輸出 TXT 與適合閱讀的 HTML。網文支援「成為小說家吧」與 Kakuyomu；電子書支援 BookWalker 作品資料與本機圖片提取。
 
 目前版本為 v0.4.0，儲存庫維持私人存取。
+
+原始碼開發版已加入電子書 OCR、Codex 圖片提取及單章翻譯。這些功能尚未包含於下列 v0.4.0 發佈包；本次更新不另行發布 EXE。
+
+## 原始碼開發版：電子書
+
+目前 GUI 保留以下分頁，尚未合併成三種提取模式，也尚未提供 OCR／Codex 比較功能：
+
+```text
+電子書
+├─ 作品設定
+├─ OCR
+│  ├─ 預覽
+│  ├─ 辨識與校訂
+│  └─ 版面設定
+├─ Codex 提取
+└─ 翻譯
+```
+
+- 作品設定：建立或選擇 BookWalker 作品，開啟作品資料夾。
+- OCR：全螢幕截圖或開啟圖片，自動偵測直式文字行，調整範圍、逐行辨識與校訂。YomiToku 使用獨立執行環境，安裝步驟見 [OCR 說明](docs/ebook-ocr.md)。
+- Codex 提取：整張圖片提取內文，支援模型、推理強度、自訂 Prompt、校訂及用量紀錄；同作品沿用專用提取對話串。詳見 [Codex 圖片提取](docs/ebook-codex.md)。
+- 匯出：指定起訖頁碼與章節，按頁碼整理章節原文；同一作品的頁碼只能歸屬一章。清空 OCR 工作備份不會刪除已匯出的章節與作品圖片。
+- 翻譯：使用 Codex 一次處理一章，共用網文的翻譯模板、分段與續傳流程。完成後合併整章譯文，再做閱讀分行，每章輸出 TXT／HTML；不改寫原文或 checkpoint。分析摘要採灰底並依內容調整高度，剩餘空間留給原文。詳見 [電子書翻譯](docs/ebook-translation.md)。
+- 開發者工具提供閱讀分行測試；電子書翻譯目前不含批次、插圖嵌入或翻譯後校訂介面。
+
+作品、圖片、OCR 備份、標準答案、模型快取與本機執行環境不提交至 GitHub。`outputs/`、`private-tests/`、`runtime/`、`cache/` 與舊 `.local-ocr/` 均排除於版本控制。
 
 ## 下載 Windows 版本
 
@@ -339,18 +365,24 @@ Gemini 成功回應但沒有提供有效內容時（例如輸入被內容政策�
 
 ```text
 outputs/
-├── Syosetu/
-│   └── <作品名稱>/
-│       ├── work.json
-│       ├── chapters.json
-│       ├── terms.json
-│       ├── synopsis.txt
-│       ├── 0001 - 作品名稱.txt
-│       └── 0001 - 作品名稱.html
-└── Kakuyomu/
-    └── <作品名稱>/
+├── webnovel/
+│   ├── Syosetu/<作品名稱>/
+│   │   ├── work.json
+│   │   ├── chapters.json
+│   │   ├── terms.json
+│   │   ├── synopsis.txt
+│   │   ├── 0001 - 作品名稱.txt
+│   │   └── 0001 - 作品名稱.html
+│   └── Kakuyomu/<作品名稱>/
+└── ebook/bookwalker/<作品ID>/
+    ├── work.json
+    ├── chapters.json
+    ├── images/
+    ├── ocr/
+    ├── originals/
+    └── translations/
 
-checkpoints/
+checkpoints/webnovel/
 └── <工作識別碼>/
     ├── metadata.json
     ├── title.json
@@ -373,28 +405,38 @@ prompts/
 
 ## 品質檢查
 
+電子書支援單章 Codex 翻譯、分段分析與續傳，以及每章 TXT／HTML 輸出；切入翻譯頁會自動檢查 Codex 登入。操作與資料格式見 [電子書翻譯](docs/ebook-translation.md)。網文的 Gemini 與專有名詞功能維持不變。
+
 ```powershell
 uv run ruff check .
-uv run pytest -p no:cacheprovider --basetemp .codex-test-tmp
+uv run python -B -m pytest -s -p no:cacheprovider --basetemp private-tests/pytest-readme
 ```
 
 ## 專案架構
 
 ```text
-core/          核心流程、設定、切塊、checkpoint 與作品記憶
-extractors/    Syosetu 與 Kakuyomu 作品及章節擷取
+core/webnovel/ 網文核心流程
+core/ebook/    電子書作品、章節與 OCR 子模組
+core/shared/   共用設定、路徑、切塊、checkpoint 與作品記憶
+extractors/    網站作品資訊及網文章節擷取
 translators/   Gemini 與 Codex 翻譯策略
 formatters/    TXT 與 HTML 輸出
-ui/            Tkinter GUI 與背景工作執行緒
+ui/app.py      主視窗，平行管理網文與電子書
+ui/webnovel/   網文介面與背景工作
+ui/ebook/      電子書介面
+ui/shared/     共用元件與 Prompt 編輯器
 resources/     內建 Prompt 與 HTML 模板
-tests/         自動化測試
+tests/         webnovel、ebook、shared 分組測試
+runtime/       本機執行環境（不提交）
+cache/         模型快取（不提交）
+private-tests/ 私人樣本、標準答案與搬遷備份（不提交）
 gui_main.py    GUI 入口
 ```
 
 ## 尚未完成與已知問題
 
 - 本地模型翻譯尚未實作。
-- v0.4.0 是目前功能的打包版本，不代表先前程式檢查發現的問題全部已修正；已知限制見 [更新說明](docs/releases/v0.4.0.md#已知限制與待修問題)。
+- v0.4.0 是既有網文功能的打包版本，不包含上述電子書開發版更新；該發布版的限制見 [更新說明](docs/releases/v0.4.0.md#已知限制與待修問題)。
 
 ## 授權狀態
 

@@ -12,16 +12,16 @@ from typing import Any
 
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from core.api_usage import DailyApiUsage
-from core.config import AppConfig
-from core.exceptions import TermMemoryError
-from core.gemini_settings import request_config
-from core.paths import get_resource_path
-from core.prompt_composer import (
+from core.shared.api_usage import DailyApiUsage
+from core.shared.config import AppConfig
+from core.shared.exceptions import TermMemoryError
+from core.shared.gemini_settings import request_config
+from core.shared.paths import get_resource_path
+from core.shared.prompt_composer import (
     compose_term_organization_prompt,
     validate_term_organization_template,
 )
-from core.term_organizer import TermOrganizationProposal
+from core.shared.term_organizer import TermOrganizationProposal
 from translators.api_errors import invalid_response, request_error, response_text
 from translators.gemini_errors import raise_if_free_tier_quota
 from translators.organizer_base import BaseTermOrganizer
